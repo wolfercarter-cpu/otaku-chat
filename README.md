@@ -21,6 +21,14 @@ or during dev:
 uv run otakuchat
 ```
 
+`uv` isn't required — this is a standard `pyproject.toml` package
+(hatchling build backend, one dependency), so `pipx` works the same way:
+
+```bash
+pipx install .
+otakuchat
+```
+
 ## Slash commands
 
 - `/help`          — show all commands with descriptions
