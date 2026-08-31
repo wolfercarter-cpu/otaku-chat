@@ -20,6 +20,7 @@ Screen {
     dock: bottom;
     margin: 1;
     border: tall #06b6d4;
+    box-sizing: content-box;
 }
 
 PromptEditor {
