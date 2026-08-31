@@ -73,6 +73,13 @@ class HistoryInput(Input):
             event.stop()
             return
 
+        # Everything else (character insertion, backspace, left/right, ...)
+        # is Input's own job — see ChatInput._on_key for why this
+        # delegation matters: without it, this override silently shadows
+        # Input's own async _on_key and typing does nothing for any key
+        # that isn't Up/Down.
+        await super()._on_key(event)
+
 
 class ChatInput(TextArea):
     """The main chat box: an auto-growing TextArea, adapted from oterm's
@@ -124,7 +131,7 @@ class ChatInput(TextArea):
         line_count = max(self.wrapped_document.height, 1)
         self.styles.height = min(line_count, self.MAX_LINES)
 
-    def _on_key(self, event: events.Key) -> None:
+    async def _on_key(self, event: events.Key) -> None:
         # Only intercept Up/Down for history recall when the box is a
         # single line — otherwise let TextArea move the cursor normally.
         if event.key in ("up", "down") and self.document.line_count == 1:
@@ -135,6 +142,15 @@ class ChatInput(TextArea):
                 self._recall_down()
             event.prevent_default()
             event.stop()
+            return
+        # Everything else (character insertion, delete/backspace, arrow
+        # navigation on multi-line text, ...) is TextArea's own job. The
+        # base class's _on_key is itself `async def` and does the actual
+        # character-insert work — this override used to be a plain `def`
+        # that shadowed it entirely and never delegated, so typing did
+        # nothing for any key that wasn't Up/Down. Always defer to super()
+        # here.
+        await super()._on_key(event)
 
     def _ensure_history_loaded(self) -> None:
         if self._loaded:
@@ -189,13 +205,18 @@ class ChatInput(TextArea):
 class PromptTextArea(TextArea):
     """TextArea with light auto-closing bracket/quote support."""
 
-    def _on_key(self, event: events.Key) -> None:
+    async def _on_key(self, event: events.Key) -> None:
         pairs = {"(": ")", "[": "]", "{": "}", '"': '"', "'": "'"}
         if event.character in pairs:
             event.prevent_default()
             closing = pairs[event.character]
             self.insert(f"{event.character}{closing}")
             self.move_cursor_relative(columns=-1)
+            return
+        # Same delegation requirement as ChatInput._on_key: without this,
+        # normal typing (anything not an auto-closed bracket/quote) does
+        # nothing in this editor.
+        await super()._on_key(event)
 
 
 class PromptEditor(Screen):
