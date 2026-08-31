@@ -96,6 +96,10 @@ class ChatInput(TextArea):
     """
 
     MAX_LINES = 8
+    # #main-i1 uses the default box-sizing: border-box, so a requested
+    # height must include the top+bottom border rows or they eat into the
+    # space left for content (see master.tcss #main-i1).
+    BORDER_ROWS = 2
 
     BINDINGS = TextArea.BINDINGS + [
         Binding("enter", "submit", "submit", show=True, key_display=None, priority=True),
@@ -129,7 +133,7 @@ class ChatInput(TextArea):
 
     def _resize_to_content(self) -> None:
         line_count = max(self.wrapped_document.height, 1)
-        self.styles.height = min(line_count, self.MAX_LINES)
+        self.styles.height = min(line_count, self.MAX_LINES) + self.BORDER_ROWS
 
     async def _on_key(self, event: events.Key) -> None:
         # Only intercept Up/Down for history recall when the box is a
