@@ -13,9 +13,9 @@ from textual.app import App, ComposeResult
 from textual.widgets import Input, Label, Markdown
 
 from . import config, context, db, memory, reasoning
-from .ollama_client import OllamaError, is_reachable, list_models
-from .pickers import ModelPicker, SessionBrowser
-from .widgets import HistoryInput, PromptEditor
+from .ollama_client import OllamaError, get_capabilities, is_reachable, list_models
+from .pickers import ModelPicker, RenameSession, SessionBrowser
+from .widgets import ChatInput, PromptEditor
 
 COMMANDS = [
     ("/help", "Show this list of commands."),
@@ -24,6 +24,8 @@ COMMANDS = [
     ("/config", "Open config.ini (model, api url, boost mode) in your editor."),
     ("/new", "Start a fresh session, clearing the visible chat."),
     ("/sessions", "Browse and resume a past session."),
+    ("/rename [name]", "Rename the current session."),
+    ("/export <file>", "Export the current session's transcript to a markdown file."),
     ("/add <file>", "Attach a file's contents to the conversation context."),
     ("/think", "Cycle the reasoning boost mode: auto -> always -> off."),
     ("/prompt", "Open a full-screen editor for composing a long/multi-line prompt."),
@@ -69,17 +71,28 @@ class OtakuChat(App):
     def compose(self) -> ComposeResult:
         yield Label("OtakuChat", id="main-l1")
         yield Markdown(self.conversation_history, id="chat-output")
-        yield HistoryInput(
-            placeholder=">>> message, or /help for commands",
-            id="main-i1",
-        )
+        yield ChatInput(id="main-i1")
 
     def on_mount(self) -> None:
+        self.refresh_header()
         if not is_reachable(self.api_url):
             self.append_to_ui(
                 f"\n\n*System: cannot reach Ollama at {self.api_url}. "
                 "Is `ollama serve` / the ollama service running?*"
             )
+
+    def refresh_header(self) -> None:
+        """Show the active model + its capability badges (oterm-style)."""
+        caps = get_capabilities(self.api_url, self.model)
+        badges = []
+        if caps.get("thinking"):
+            badges.append("🧠")
+        if caps.get("tools"):
+            badges.append("🛠️")
+        if caps.get("vision"):
+            badges.append("👁️")
+        badge_str = f"  {' '.join(badges)}" if badges else ""
+        self.query_one("#main-l1", Label).update(f"OtakuChat — {self.model}{badge_str}")
 
     # -- system prompt assembly --------------------------------------
 
@@ -143,14 +156,14 @@ class OtakuChat(App):
 
     # -- input handling --------------------------------------------------
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
+    async def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
         user_input = event.value
-        event.input.value = ""
+        event.input.clear()
         if not user_input.strip():
             return
 
         db.add_input_history(user_input)
-        if isinstance(event.input, HistoryInput):
+        if isinstance(event.input, ChatInput):
             event.input.reload_history()
 
         cmd = user_input.strip()
@@ -184,6 +197,22 @@ class OtakuChat(App):
             self.push_screen(SessionBrowser(), self.handle_session_pick)
             return
 
+        if lower.startswith("/rename"):
+            arg = cmd[len("/rename"):].strip()
+            if arg:
+                db.rename_session(self.session_id, arg)
+                self.append_to_ui(f"\n\n*System: session renamed to '{arg}'.*")
+            else:
+                row = db.get_session(self.session_id)
+                current_name = row["title"] if row else ""
+                self.push_screen(RenameSession(current_name), self.handle_rename)
+            return
+
+        if lower.startswith("/export"):
+            arg = cmd[len("/export"):].strip()
+            self.handle_export(arg)
+            return
+
         if lower == "/memory":
             with self.suspend():
                 subprocess.run(shlex.split(config.get_editor()) + [config.get_memory_path()])
@@ -213,6 +242,7 @@ class OtakuChat(App):
             if arg:
                 self.model = arg
                 config.save_model(arg)
+                self.refresh_header()
                 self.append_to_ui(f"\n\n*System: switched active model to `{arg}`.*")
             else:
                 self.open_model_picker()
@@ -248,6 +278,7 @@ class OtakuChat(App):
                 rendered.append(f"\n\n**Assistant:**\n{r['content']}")
         self.conversation_history = "".join(rendered) if len(rendered) > 2 else "\n\n".join(rendered)
         self.query_one("#chat-output", Markdown).update(self.conversation_history)
+        self.refresh_header()
 
     @work(thread=True)
     def open_model_picker(self) -> None:
@@ -266,10 +297,38 @@ class OtakuChat(App):
             return
         self.model = model_name
         config.save_model(model_name)
+        self.refresh_header()
         self.append_to_ui(f"\n\n*System: switched active model to `{model_name}`.*")
+
+    def handle_rename(self, new_name: str | None) -> None:
+        if not new_name:
+            return
+        db.rename_session(self.session_id, new_name)
+        self.append_to_ui(f"\n\n*System: session renamed to '{new_name}'.*")
+
+    def handle_export(self, filepath: str) -> None:
+        from pathlib import Path
+
+        if not filepath:
+            row = db.get_session(self.session_id)
+            slug = (row["title"] if row else "chat").lower()
+            slug = "".join(c if c.isalnum() else "-" for c in slug).strip("-") or "chat"
+            filepath = f"otakuchat-{slug}-{self.session_id}.md"
+
+        path = Path(filepath).expanduser()
+        rows = db.get_messages(self.session_id)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                for r in rows:
+                    f.write(f"### {r['role'].capitalize()}\n\n{r['content']}\n\n---\n\n")
+        except OSError as e:
+            self.append_to_ui(f"\n\n*System: export failed — {e}*")
+            return
+        self.append_to_ui(f"\n\n*System: session exported to {path}*")
 
     def handle_add_file(self, filepath: str) -> None:
         from pathlib import Path
+        from .redact import redact_secrets
 
         path = Path(filepath).expanduser()
         if not path.is_file():
@@ -280,9 +339,11 @@ class OtakuChat(App):
         except Exception as e:
             self.append_to_ui(f"\n\n*System: failed to read {filepath} — {e}*")
             return
-        note = f"[Attached file: {path.name}]\n```\n{content[:8000]}\n```"
+        content, redacted = redact_secrets(content[:8000])
+        note = f"[Attached file: {path.name}]\n```\n{content}\n```"
         db.add_message(self.session_id, "user", note)
-        self.append_to_ui(f"\n\n*System: attached {path.name} to conversation context.*")
+        warn = f" ({redacted} likely secret(s) redacted)" if redacted else ""
+        self.append_to_ui(f"\n\n*System: attached {path.name} to conversation context{warn}.*")
 
     # -- chat turn -------------------------------------------------------
 

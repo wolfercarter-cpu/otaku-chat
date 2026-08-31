@@ -27,13 +27,21 @@ uv run otakuchat
 - `/config`        — open config.ini (model, api url, boost mode) in your editor
 - `/new`           — start a fresh session
 - `/sessions`      — browse and resume past sessions
-- `/add <file>`    — attach a file's contents to context (read-only)
+- `/rename [name]` — rename the current session
+- `/export <file>` — export the current session's transcript to markdown
+- `/add <file>`    — attach a file's contents to context (read-only, secrets redacted)
 - `/think`         — cycle boost mode: auto / always / off
 - `/prompt`        — open a full-screen editor for a long/multi-line prompt
 - `/quit`          — exit
 
-Plain input also gets shell-style **Up/Down history recall**, persisted
-across sessions in sqlite (`otakuchat/widgets.py:HistoryInput`).
+The main chat box is a real multi-line editor (`otakuchat/widgets.py:ChatInput`,
+adapted from oterm): **Enter** submits, **Shift+Enter** inserts a newline, it
+auto-grows up to 8 lines, and it gets shell-style **Up/Down history recall**
+(single-line only — once you're composing multiple lines Up/Down move the
+cursor like a normal editor), persisted across sessions in sqlite.
+
+The header shows the active model plus its live capability badges
+(🧠 thinking / 🛠️ tools / 👁️ vision), read from Ollama's `/api/show`.
 
 ## Design
 
@@ -80,9 +88,14 @@ repo) and porting the parts that fit a chat-only, no-shell, local-Ollama
 harness:
 
 - **Hermes**: prompt-cache stability as a first-class constraint, head/tail-
-  protected trajectory compression, app-driven self-curating memory.
-- **oterm**: Ollama `/api/show` capability detection, native `think`
-  streaming support.
+  protected trajectory compression, app-driven self-curating memory,
+  secret redaction (trimmed down from `agent/redact.py`) applied to `/add`
+  file ingestion and memory curation so a pasted API key never becomes a
+  permanent fact or a persisted attachment.
+- **oterm**: Ollama `/api/show` capability detection + live badges in the
+  header, native `think` streaming support, `/rename` and `/export`
+  session commands, the Enter-submits/Shift+Enter-newline auto-growing
+  chat box (`ChatInput`, adapted from `PostableTextArea`).
 - **aider**: inline `<think>` tag stripping for models that leak reasoning
   into `content`, size/budget-aware recursive context compaction ending on
   clean turn boundaries, persistent shell-style input history recall.

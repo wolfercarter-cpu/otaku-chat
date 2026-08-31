@@ -1,5 +1,8 @@
 from textual.screen import Screen
-from textual.widgets import Label, OptionList
+from textual.app import ComposeResult
+from textual.containers import Container
+from textual.screen import ModalScreen
+from textual.widgets import Input, Label, OptionList
 from textual.widgets.option_list import Option
 
 from . import db
@@ -58,6 +61,33 @@ class ModelPicker(Screen):
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         self.dismiss(event.option.id)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class RenameSession(ModalScreen[str]):
+    """Rename the current session (oterm-style modal)."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, old_name: str) -> None:
+        super().__init__()
+        self.old_name = old_name
+
+    def compose(self) -> ComposeResult:
+        with Container(id="rename-container"):
+            yield Label("Rename session — Enter to save, Esc to cancel", id="rename-header")
+            yield Input(id="rename-input", value=self.old_name)
+
+    def on_mount(self) -> None:
+        self.query_one("#rename-input", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.value.strip():
+            self.dismiss(event.value.strip())
+        else:
+            self.dismiss(None)
 
     def action_cancel(self) -> None:
         self.dismiss(None)

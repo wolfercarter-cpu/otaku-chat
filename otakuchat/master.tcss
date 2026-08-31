@@ -58,3 +58,21 @@ SessionBrowser, ModelPicker {
     margin: 1;
 }
 
+RenameSession {
+    align: center middle;
+}
+
+#rename-container {
+    width: 60%;
+    height: auto;
+    border: solid #8b5cf6;
+    padding: 1 2;
+    background: $surface;
+}
+
+#rename-header {
+    text-style: bold;
+    color: #a855f7;
+    padding-bottom: 1;
+}
+

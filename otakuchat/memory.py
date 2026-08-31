@@ -12,6 +12,7 @@ import re
 
 from . import config, db
 from .ollama_client import chat_once
+from .redact import redact_secrets
 
 CURATION_SYSTEM = (
     "You extract durable, reusable facts from a conversation for long-term memory. "
@@ -65,6 +66,7 @@ def curate_from_turns(api_url: str, model: str, turns: list[dict]) -> list[str]:
         fact = fact.strip().strip("-* ")
         if not fact or len(fact) > 300:
             continue
+        fact, _ = redact_secrets(fact)  # never let a leaked secret become a permanent fact
         if db.add_fact(fact):
             added.append(fact)
 
