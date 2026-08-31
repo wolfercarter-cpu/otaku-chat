@@ -379,13 +379,44 @@ class OtakuChat(App):
         self.append_to_ui(f"\n\n*System: session exported to {path}*")
 
     def handle_add_file(self, filepath: str) -> None:
+        import base64
         from pathlib import Path
         from .redact import redact_secrets
+
+        IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
         path = Path(filepath).expanduser()
         if not path.is_file():
             self.append_to_ui(f"\n\n*System: file not found: {filepath}*")
             return
+
+        if path.suffix.lower() in IMAGE_EXTENSIONS:
+            # Vision attachment: Ollama's multimodal message format takes
+            # base64 image bytes directly on the message, no OCR/description
+            # step needed — only worth sending to a model whose capability
+            # badge (see refresh_header) actually shows 👁️. Adapted from
+            # oterm's app/widgets/image.py (ImageDirectoryTree extension
+            # filtering) — otaku-chat has no file-picker UI, so this reuses
+            # the existing /add command instead of a new picker screen.
+            caps = get_capabilities(self.api_url, self.model)
+            if not caps.get("vision"):
+                self.append_to_ui(
+                    f"\n\n*System: {self.model} has no vision capability (👁️) — "
+                    "image attached anyway, but it may be ignored.*"
+                )
+            try:
+                raw = path.read_bytes()
+            except Exception as e:
+                self.append_to_ui(f"\n\n*System: failed to read {filepath} — {e}*")
+                return
+            b64 = base64.b64encode(raw).decode("ascii")
+            db.add_message(
+                self.session_id, "user", f"[Attached image: {path.name}]",
+                images=[b64],
+            )
+            self.append_to_ui(f"\n\n*System: attached image {path.name} to conversation context.*")
+            return
+
         try:
             content = path.read_text(encoding="utf-8")
         except Exception as e:

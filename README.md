@@ -29,7 +29,7 @@ uv run otakuchat
 - `/sessions`      — browse and resume past sessions
 - `/rename [name]` — rename the current session
 - `/export <file>` — export the current session's transcript to markdown
-- `/add <file>`    — attach a file's contents to context (read-only, secrets redacted)
+- `/add <file>`    — attach a file's contents to context (read-only, secrets redacted); image files (.png/.jpg/.jpeg/.gif/.webp/.bmp) are attached as a vision message instead
 - `/think`         — cycle boost mode: auto / always / off
 - `/pattern [name]`— apply a curated prompt pattern to your next message (Fabric-style); no arg opens a picker, `/pattern off` clears it
 - `/prompt`        — open a full-screen editor for a long/multi-line prompt
@@ -152,3 +152,10 @@ harness:
   `config.ini` rather than oterm's dedicated modal screen, since editing
   config.ini via the existing `/config` command already covers it without
   a new command.
+- **oterm** (`app/widgets/image.py`): image-extension detection for the
+  header's 👁️ vision badge to actually mean something — `/add` now
+  base64-attaches `.png/.jpg/.jpeg/.gif/.webp/.bmp` files as an Ollama
+  multimodal `images` message instead of dumping them as text, warning
+  first if the active model has no vision capability. Reused the existing
+  `/add` command rather than porting oterm's dedicated image-picker
+  `DirectoryTree` screen.

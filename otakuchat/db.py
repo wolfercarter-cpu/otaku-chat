@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS messages (
     role TEXT NOT NULL,
     content TEXT NOT NULL,
     boosted INTEGER NOT NULL DEFAULT 0,
+    -- JSON array of base64-encoded image bytes, Ollama's own multimodal
+    -- message format (see ollama_client.py). NULL/empty for normal turns.
+    images TEXT,
     created_at REAL NOT NULL
 );
 
@@ -82,6 +85,12 @@ def _connect() -> sqlite3.Connection:
 def init_db() -> None:
     with _connect() as conn:
         conn.executescript(SCHEMA)
+        # Lightweight migration for DBs created before the `images` column
+        # existed — CREATE TABLE IF NOT EXISTS above won't add it to an
+        # already-existing messages table.
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
+        if "images" not in cols:
+            conn.execute("ALTER TABLE messages ADD COLUMN images TEXT")
 
 
 @contextmanager
@@ -134,12 +143,16 @@ def rename_session(session_id: int, title: str) -> None:
 
 # --- Messages -----------------------------------------------------------
 
-def add_message(session_id: int, role: str, content: str, boosted: bool = False) -> int:
+def add_message(
+    session_id: int, role: str, content: str, boosted: bool = False,
+    images: list[str] | None = None,
+) -> int:
+    images_json = json.dumps(images) if images else None
     with db() as conn:
         cur = conn.execute(
-            "INSERT INTO messages (session_id, role, content, boosted, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (session_id, role, content, int(boosted), time.time()),
+            "INSERT INTO messages (session_id, role, content, boosted, images, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (session_id, role, content, int(boosted), images_json, time.time()),
         )
     touch_session(session_id)
     return cur.lastrowid

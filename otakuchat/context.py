@@ -22,6 +22,8 @@ configured budget, and reuses a cached summary (session_compaction table)
 instead of re-summarizing on every turn — so a stable-length session pays
 this cost once, not every message.
 """
+import json
+
 from . import config, db
 from .ollama_client import chat_once
 
@@ -141,7 +143,7 @@ def get_effective_messages(session_id: int) -> list[dict]:
     compaction = db.get_compaction(session_id)
 
     if not compaction:
-        return [{"role": r["role"], "content": r["content"]} for r in rows]
+        return [_row_to_message(r) for r in rows]
 
     covered_id = compaction["covered_through_message_id"]
     remaining = [r for r in rows if r["id"] > covered_id]
@@ -150,5 +152,18 @@ def get_effective_messages(session_id: int) -> list[dict]:
         "role": "user",
         "content": f"[Earlier conversation summary]\n{compaction['summary']}",
     }]
-    out.extend({"role": r["role"], "content": r["content"]} for r in remaining)
+    out.extend(_row_to_message(r) for r in remaining)
     return out
+
+
+def _row_to_message(r) -> dict:
+    msg = {"role": r["role"], "content": r["content"]}
+    images_json = r["images"] if "images" in r.keys() else None
+    if images_json:
+        try:
+            images = json.loads(images_json)
+        except (json.JSONDecodeError, TypeError):
+            images = None
+        if images:
+            msg["images"] = images
+    return msg
