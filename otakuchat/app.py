@@ -17,9 +17,22 @@ from .ollama_client import OllamaError, is_reachable, list_models
 from .pickers import ModelPicker, SessionBrowser
 from .widgets import PromptEditor
 
+COMMANDS = [
+    ("/help", "Show this list of commands."),
+    ("/model [name]", "List installed Ollama models to pick from, or switch directly by name."),
+    ("/memory", "Open the curated memory file (self-learned facts) in your editor."),
+    ("/config", "Open config.ini (model, api url, boost mode) in your editor."),
+    ("/new", "Start a fresh session, clearing the visible chat."),
+    ("/sessions", "Browse and resume a past session."),
+    ("/add <file>", "Attach a file's contents to the conversation context."),
+    ("/think", "Cycle the reasoning boost mode: auto -> always -> off."),
+    ("/prompt", "Open a full-screen editor for composing a long/multi-line prompt."),
+    ("/quit", "Exit OtakuChat (alias: /exit)."),
+]
+
 BANNER = (
     "OtakuChat — local, chat-only, self-curating.\n"
-    "Type a message, or try /model /memory /config /new /sessions /add /think /prompt /quit"
+    "Type a message, or try /help for the full command list."
 )
 
 
@@ -48,7 +61,7 @@ class OtakuChat(App):
         yield Label("OtakuChat", id="main-l1")
         yield Markdown(self.conversation_history, id="chat-output")
         yield Input(
-            placeholder=">>> message, or /model /memory /config /new /sessions /add /think /prompt /quit",
+            placeholder=">>> message, or /help for commands",
             id="main-i1",
         )
 
@@ -112,6 +125,13 @@ class OtakuChat(App):
 
         if lower in ("/quit", "/exit"):
             self.exit()
+            return
+
+        if lower == "/help":
+            lines = ["**Commands:**"]
+            for name, desc in COMMANDS:
+                lines.append(f"- `{name}` — {desc}")
+            self.append_to_ui("\n\n" + "\n".join(lines))
             return
 
         if lower == "/prompt":
