@@ -16,12 +16,15 @@ from textual.app import App, ComposeResult
 from textual.widgets import Label, Markdown
 
 from . import config, context, db, facts, memory, patterns, reasoning, search, snippets
+from .inputer import TextPrompt
 from .ollama_client import OllamaError, get_capabilities, is_reachable, list_models
-from .pickers import FileBrowser, ModelPicker, PatternPicker, RenameSession, SessionBrowser
+from .options import OptionSelector
+from .pickers import FileBrowser, ModelPicker, PatternPicker, SessionBrowser
 from .widgets import ChatInput, PromptEditor
 
 COMMANDS = [
     ("/help", "Show this list of commands."),
+    ("/menu", "Open a picker listing every command, instead of typing one."),
     ("/model [name]", "List installed Ollama models to pick from, or switch directly by name."),
     ("/memory", "Open the curated memory file (self-learned facts) in your editor."),
     ("/facts", "Open the curated topic->URL bookmark file (from web search grounding) in your editor."),
@@ -30,7 +33,7 @@ COMMANDS = [
     ("/new", "Start a fresh session, clearing the visible chat."),
     ("/sessions", "Browse and resume a past session."),
     ("/rename [name]", "Rename the current session."),
-    ("/export <file>", "Export the current session's transcript to a markdown file."),
+    ("/export [file]", "Export the current session's transcript to a markdown file; no arg prompts for a filename (pre-filled with a default)."),
     ("/add [file]", "Attach a file's contents to the conversation context; no arg opens a file browser."),
     ("/think", "Cycle the reasoning boost mode: auto -> always -> off."),
     ("/pattern [name]", "Apply a curated prompt pattern (Fabric-style) to your next message, or clear with /pattern off."),
@@ -244,6 +247,13 @@ class OtakuChat(App):
         if isinstance(event.input, ChatInput):
             event.input.reload_history()
 
+        self.handle_command(user_input)
+
+    def handle_command(self, user_input: str) -> None:
+        """Dispatch a slash command, or send a plain message. Shared by
+        typed input (on_chat_input_submitted) and /menu (handle_menu_pick)
+        so picking "quit" from the menu behaves exactly like typing /quit —
+        including opening whatever picker a bare command normally opens."""
         cmd = user_input.strip()
         lower = cmd.lower()
 
@@ -256,6 +266,10 @@ class OtakuChat(App):
             for name, desc in COMMANDS:
                 lines.append(f"- `{name}` — {desc}")
             self.append_to_ui("\n\n" + "\n".join(lines))
+            return
+
+        if lower == "/menu":
+            self.push_screen(OptionSelector(), self.handle_menu_pick)
             return
 
         if lower == "/prompt":
@@ -283,12 +297,24 @@ class OtakuChat(App):
             else:
                 row = db.get_session(self.session_id)
                 current_name = row["title"] if row else ""
-                self.push_screen(RenameSession(current_name), self.handle_rename)
+                self.push_screen(
+                    TextPrompt("Rename session — Enter to save, Esc to cancel", current_name),
+                    self.handle_rename,
+                )
             return
 
         if lower.startswith("/export"):
             arg = cmd[len("/export"):].strip()
-            self.handle_export(arg)
+            if arg:
+                self.handle_export(arg)
+            else:
+                self.push_screen(
+                    TextPrompt(
+                        "Export to file — Enter to save, Esc to cancel",
+                        self._default_export_filename(),
+                    ),
+                    self.handle_export_pick,
+                )
             return
 
         if lower == "/memory":
@@ -325,6 +351,7 @@ class OtakuChat(App):
             nxt = modes[(modes.index(current) + 1) % len(modes)] if current in modes else "auto"
             config.save_boost_mode(nxt)
             self.append_to_ui(f"\n\n*System: reasoning boost mode set to '{nxt}'.*")
+            self.notify(f"Reasoning boost mode: {nxt}", title="Think")
             return
 
         if lower.startswith("/pattern"):
@@ -368,6 +395,10 @@ class OtakuChat(App):
     def handle_long_prompt(self, long_text: str | None) -> None:
         if long_text:
             self.process_chat_message(long_text)
+
+    def handle_menu_pick(self, command: str | None) -> None:
+        if command:
+            self.handle_command(command)
 
     def handle_session_pick(self, session_id: int | None) -> None:
         if session_id is None:
@@ -431,15 +462,20 @@ class OtakuChat(App):
         db.rename_session(self.session_id, new_name)
         self.append_to_ui(f"\n\n*System: session renamed to '{new_name}'.*")
 
+    def handle_export_pick(self, filepath: str | None) -> None:
+        if filepath:
+            self.handle_export(filepath)
+
+    def _default_export_filename(self) -> str:
+        row = db.get_session(self.session_id)
+        slug = (row["title"] if row else "chat").lower()
+        slug = "".join(c if c.isalnum() else "-" for c in slug).strip("-") or "chat"
+        return f"otakuchat-{slug}-{self.session_id}.md"
+
     def handle_export(self, filepath: str) -> None:
         from pathlib import Path
 
-        if not filepath:
-            row = db.get_session(self.session_id)
-            slug = (row["title"] if row else "chat").lower()
-            slug = "".join(c if c.isalnum() else "-" for c in slug).strip("-") or "chat"
-            filepath = f"otakuchat-{slug}-{self.session_id}.md"
-
+        filepath = filepath or self._default_export_filename()
         path = Path(filepath).expanduser()
         rows = db.get_messages(self.session_id)
         try:

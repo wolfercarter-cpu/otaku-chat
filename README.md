@@ -41,6 +41,7 @@ uv run otakuchat
 ## Slash commands
 
 - `/help`          — show all commands with descriptions
+- `/menu`          — pick a command from a list instead of typing one
 - `/model [name]`  — list/switch the active Ollama model
 - `/memory`        — open the curated memory file in your editor
 - `/facts`         — open the curated topic→URL bookmark file (from web search grounding) in your editor
@@ -48,8 +49,8 @@ uv run otakuchat
 - `/config`        — open config.ini (model, api url, boost mode) in your editor
 - `/new`           — start a fresh session
 - `/sessions`      — browse and resume past sessions
-- `/rename [name]` — rename the current session
-- `/export <file>` — export the current session's transcript to markdown
+- `/rename [name]` — rename the current session; no arg opens a text prompt pre-filled with the current title
+- `/export [file]` — export the current session's transcript to markdown; no arg opens a text prompt pre-filled with a default filename
 - `/add [file]`    — attach a file's contents to context (read-only, secrets redacted); no arg opens a file browser; image files (.png/.jpg/.jpeg/.gif/.webp/.bmp) are attached as a vision message instead
 - `/think`         — cycle boost mode: auto / always / off
 - `/pattern [name]`— apply a curated prompt pattern to your next message (Fabric-style); no arg opens a picker, `/pattern off` clears it

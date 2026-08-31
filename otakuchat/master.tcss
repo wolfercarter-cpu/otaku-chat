@@ -58,11 +58,11 @@ SessionBrowser, ModelPicker {
     margin: 1;
 }
 
-RenameSession {
+OptionSelector, TextPrompt {
     align: center middle;
 }
 
-#rename-container {
+#sel-c1, #iptr-c1 {
     width: 60%;
     height: auto;
     border: solid #8b5cf6;
@@ -70,7 +70,7 @@ RenameSession {
     background: $surface;
 }
 
-#rename-header {
+#menu-header, #iptr-l1 {
     text-style: bold;
     color: #a855f7;
     padding-bottom: 1;
