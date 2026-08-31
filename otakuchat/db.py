@@ -52,6 +52,15 @@ CREATE TABLE IF NOT EXISTS memory_facts (
     fact TEXT NOT NULL UNIQUE,
     created_at REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS session_compaction (
+    session_id INTEGER PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    -- id of the last raw message folded into `summary` (exclusive of
+    -- everything after it, which is sent to the model uncompressed)
+    covered_through_message_id INTEGER NOT NULL,
+    summary TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
 """
 
 
@@ -198,3 +207,24 @@ def prune_oldest_facts(keep: int) -> None:
             conn.executemany(
                 "DELETE FROM memory_facts WHERE id = ?", [(i,) for i in to_remove]
             )
+
+
+# --- Session compaction (trajectory compression cache) -------------------
+
+def get_compaction(session_id: int) -> sqlite3.Row | None:
+    with db() as conn:
+        return conn.execute(
+            "SELECT * FROM session_compaction WHERE session_id = ?", (session_id,)
+        ).fetchone()
+
+
+def save_compaction(session_id: int, covered_through_message_id: int, summary: str) -> None:
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO session_compaction (session_id, covered_through_message_id, summary, updated_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(session_id) DO UPDATE SET "
+            "covered_through_message_id = excluded.covered_through_message_id, "
+            "summary = excluded.summary, updated_at = excluded.updated_at",
+            (session_id, covered_through_message_id, summary, time.time()),
+        )

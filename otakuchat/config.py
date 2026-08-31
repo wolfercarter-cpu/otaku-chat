@@ -34,6 +34,14 @@ DEFAULTS = {
         "curation_interval_turns": "8",
         "max_memory_chars": "6000",
     },
+    "CONTEXT": {
+        # once a session's transmitted history exceeds this many messages,
+        # compact the middle into a summary (Hermes-style trajectory
+        # compression) instead of resending an ever-growing transcript
+        "max_context_messages": "30",
+        # always send the most recent N raw messages uncompressed
+        "protect_tail_messages": "12",
+    },
 }
 
 
@@ -154,3 +162,12 @@ def get_curation_interval() -> int:
 
 def get_max_memory_chars() -> int:
     return int(_get("MEMORY", "max_memory_chars", "6000"))
+
+
+# --- CONTEXT (trajectory compression) ---
+def get_max_context_messages() -> int:
+    return int(_get("CONTEXT", "max_context_messages", "30"))
+
+
+def get_protect_tail_messages() -> int:
+    return int(_get("CONTEXT", "protect_tail_messages", "12"))

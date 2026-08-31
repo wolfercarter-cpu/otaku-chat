@@ -12,7 +12,7 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Label, Markdown
 
-from . import config, db, memory, reasoning
+from . import config, context, db, memory, reasoning
 from .ollama_client import OllamaError, is_reachable, list_models
 from .pickers import ModelPicker, SessionBrowser
 from .widgets import PromptEditor
@@ -52,8 +52,17 @@ class OtakuChat(App):
         self.turns_since_curation = 0
         self.last_perf_id: int | None = None
 
+        # Cache the assembled system prompt string and only rebuild it when
+        # memory/soul actually change (memory.py rewrites are infrequent —
+        # every N turns) rather than on every single call. A byte-stable
+        # system prefix is what lets Ollama reuse its KV cache turn to turn
+        # instead of reprocessing the whole prompt every message.
+        self._system_prompt_cache: str | None = None
+        self._memory_facts_fingerprint: tuple = ()
+
         self.conversation_history = f"*{BANNER}*"
         self.active_stream = ""
+        self.active_thinking = ""
 
     # -- lifecycle ---------------------------------------------------
 
@@ -74,7 +83,19 @@ class OtakuChat(App):
 
     # -- system prompt assembly --------------------------------------
 
-    def build_system_prompt(self) -> str:
+    def build_system_prompt(self, force: bool = False) -> str:
+        """Assemble the system prompt, but reuse the cached string unless
+        the underlying facts actually changed — keeps the prefix
+        byte-stable across turns so Ollama can reuse its KV cache instead
+        of reprocessing the whole system+memory block every message."""
+        facts_fingerprint = tuple(db.list_facts())
+        if (
+            not force
+            and self._system_prompt_cache is not None
+            and facts_fingerprint == self._memory_facts_fingerprint
+        ):
+            return self._system_prompt_cache
+
         try:
             with open(self.soul_file, "r") as f:
                 soul_text = f.read()
@@ -85,13 +106,15 @@ class OtakuChat(App):
         parts = [soul_text]
         if memory_block:
             parts.append(memory_block)
-        return "\n\n".join(parts)
+        prompt = "\n\n".join(parts)
+
+        self._system_prompt_cache = prompt
+        self._memory_facts_fingerprint = facts_fingerprint
+        return prompt
 
     def build_messages(self) -> list[dict]:
-        rows = db.get_messages(self.session_id)
         messages = [{"role": "system", "content": self.build_system_prompt()}]
-        for r in rows:
-            messages.append({"role": r["role"], "content": r["content"]})
+        messages.extend(context.get_effective_messages(self.session_id))
         return messages
 
     # -- UI helpers ----------------------------------------------------
@@ -104,12 +127,18 @@ class OtakuChat(App):
     def stream_to_ui(self, chunk: str) -> None:
         self.active_stream += chunk
         self.query_one("#chat-output", Markdown).update(
-            self.conversation_history + self.active_stream
+            self.conversation_history + self.active_thinking + self.active_stream
+        )
+
+    def thinking_to_ui(self, chunk: str) -> None:
+        self.active_thinking += chunk
+        self.query_one("#chat-output", Markdown).update(
+            self.conversation_history + self.active_thinking + self.active_stream
         )
 
     def status_to_ui(self, note: str) -> None:
         self.query_one("#chat-output", Markdown).update(
-            self.conversation_history + self.active_stream + f"\n\n*{note}*"
+            self.conversation_history + self.active_thinking + self.active_stream + f"\n\n*{note}*"
         )
 
     # -- input handling --------------------------------------------------
@@ -142,6 +171,7 @@ class OtakuChat(App):
             self.session_id = db.create_session("New chat", self.model)
             self.turns_since_curation = 0
             self.last_perf_id = None
+            self._system_prompt_cache = None
             self.conversation_history = f"*{BANNER}*\n\n*System: started a new session (#{self.session_id}).*"
             self.query_one("#chat-output", Markdown).update(self.conversation_history)
             return
@@ -204,6 +234,7 @@ class OtakuChat(App):
         self.model = row["model"]
         self.turns_since_curation = 0
         self.last_perf_id = None
+        self._system_prompt_cache = None
         history_rows = db.get_messages(session_id)
         rendered = [f"*{BANNER}*", f"*System: resumed session #{session_id} ({row['title']}).*"]
         for r in history_rows:
@@ -261,6 +292,7 @@ class OtakuChat(App):
     @work(thread=True)
     def run_turn_bg(self) -> None:
         self.active_stream = ""
+        self.active_thinking = ""
         self.call_from_thread(self.status_to_ui, "thinking...")
 
         messages = self.build_messages()
@@ -271,22 +303,39 @@ class OtakuChat(App):
         def on_token(chunk: str) -> None:
             self.call_from_thread(self.stream_to_ui, chunk)
 
+        def on_thinking(chunk: str) -> None:
+            self.call_from_thread(self.thinking_to_ui, chunk)
+
         try:
             self.call_from_thread(self.append_to_ui, "\n\n**Assistant:**\n")
-            result = reasoning.run_turn(self.api_url, self.model, messages, on_status, on_token)
+            result = reasoning.run_turn(
+                self.api_url, self.model, messages, on_status, on_token, on_thinking
+            )
         except OllamaError as e:
             self.call_from_thread(self.append_to_ui, f"\n\n*Error talking to Ollama: {e}*")
             self.active_stream = ""
+            self.active_thinking = ""
             return
         except Exception as e:  # noqa: BLE001 - surface any failure, keep app alive
             self.call_from_thread(self.append_to_ui, f"\n\n*Unexpected error: {e}*")
             self.active_stream = ""
+            self.active_thinking = ""
             return
+
+        # If the model natively thought out loud, fold a collapsed-looking
+        # note into the permanent transcript instead of the raw stream (the
+        # raw thinking can be long; keep the visible log focused on answers).
+        if result.thinking:
+            think_preview = result.thinking.strip()
+            if len(think_preview) > 400:
+                think_preview = think_preview[:400] + "…"
+            self.conversation_history += f"\n\n*[thought: {think_preview}]*\n"
 
         # Commit the final text (in case boosted path streamed a re-typed
         # draft rather than a live model stream)
         self.conversation_history += result.content
         self.active_stream = ""
+        self.active_thinking = ""
         self.call_from_thread(
             self.query_one("#chat-output", Markdown).update, self.conversation_history
         )
@@ -304,9 +353,17 @@ class OtakuChat(App):
         )
         if added:
             self.turns_since_curation = 0
+            self._system_prompt_cache = None  # facts changed, must rebuild
             summary = "; ".join(added[:3])
             self.call_from_thread(
                 self.append_to_ui, f"\n\n*[memory] learned: {summary}*"
+            )
+
+        compacted = context.maybe_compact(self.api_url, self.model, self.session_id)
+        if compacted:
+            self.call_from_thread(
+                self.append_to_ui,
+                "\n\n*[context] older turns compacted to stay within the model's window.*",
             )
 
 

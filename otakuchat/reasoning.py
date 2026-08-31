@@ -1,11 +1,22 @@
 """The aggregation / self-boost reasoning layer.
 
 This is the piece that makes an underpowered local model (llama3.2:3b,
-qwen2.5-coder:7b, ...) punch above its weight: a draft -> self-critique ->
-refine pass, run with the *same* local model, reserved for prompts that
-actually look like they need it.
+qwen2.5-coder:7b, deepseek-r1, ...) punch above its weight — via TWO
+strategies, chosen automatically per model:
 
-It's adaptive, not a dumb on/off switch:
+1. Native thinking (preferred when available): some Ollama models
+   (deepseek-r1, qwen3, gpt-oss, ...) support server-side chain-of-thought
+   via `think: true`. When get_capabilities() reports this, we just ask
+   for it directly — one call, the model reasons before answering, and we
+   stream the reasoning into the UI as a collapsible/dim "thinking" block.
+   Cheaper AND smarter than faking it externally.
+
+2. External draft -> self-critique -> refine (fallback): for models with
+   no native reasoning mode (llama3.2, qwen2.5-coder, ...), we simulate the
+   same effect by running the model against itself three times with the
+   same weights: draft, critique the draft, refine using the critique.
+
+Both paths are adaptive, not a dumb on/off switch:
   - a cheap heuristic estimates prompt "complexity" (length, code content,
     multi-step asks, question density)
   - mode=auto compares that score to a per-install, self-tuned threshold
@@ -26,7 +37,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from . import config, db
-from .ollama_client import chat_once, chat_stream
+from .ollama_client import chat_once, chat_stream, get_capabilities
 
 CODE_HINTS = re.compile(r"```|def |class |import |function |SELECT |sudo |systemctl |\{|\}|;\n")
 STEP_HINTS = re.compile(r"\b(step|first|then|after that|finally|plan|design|architect|debug|refactor)\b", re.I)
@@ -53,7 +64,7 @@ REFINE_SYSTEM_SUFFIX = (
 
 def complexity_score(prompt: str) -> int:
     """Cheap 0-ish..N heuristic score for how much a prompt likely benefits
-    from a draft/critique/refine pass rather than a single fast shot."""
+    from a boosted reasoning pass rather than a single fast shot."""
     score = len(prompt)
     if CODE_HINTS.search(prompt):
         score += 150
@@ -85,6 +96,8 @@ class BoostResult:
     boosted: bool
     latency_s: float
     perf_id: int
+    strategy: str  # "none" | "native_thinking" | "draft_critique_refine"
+    thinking: str = ""
 
 
 def run_turn(
@@ -93,12 +106,15 @@ def run_turn(
     messages: list[dict],
     on_status: Callable[[str], None],
     on_token: Callable[[str], None],
+    on_thinking: Callable[[str], None] | None = None,
 ) -> BoostResult:
     """Run one assistant turn, transparently boosting if warranted.
 
     messages: full running conversation ending in the latest user turn.
     on_status: fired with short progress notes ("(thinking harder...)").
     on_token: fired with streamed text chunks of the FINAL visible answer.
+    on_thinking: fired with streamed native chain-of-thought chunks, when
+      the model natively supports it and a boost is warranted.
     """
     user_prompt = messages[-1]["content"] if messages and messages[-1]["role"] == "user" else ""
     boosted = should_boost(model, user_prompt)
@@ -108,9 +124,22 @@ def run_turn(
         final = chat_stream(api_url, model, messages, on_token)
         latency = time.time() - start
         perf_id = db.record_perf(model, len(user_prompt), False, latency)
-        return BoostResult(final.get("content", ""), False, latency, perf_id)
+        return BoostResult(final.get("content", ""), False, latency, perf_id, "none")
 
-    # --- Boosted path: draft -> critique -> refine, same model throughout ---
+    caps = get_capabilities(api_url, model)
+
+    # --- Strategy 1: native server-side thinking (cheap, 1 call) ---
+    if caps.get("thinking"):
+        on_status("(thinking...)")
+        final = chat_stream(api_url, model, messages, on_token, on_thinking=on_thinking, think=True)
+        latency = time.time() - start
+        perf_id = db.record_perf(model, len(user_prompt), True, latency)
+        return BoostResult(
+            final.get("content", ""), True, latency, perf_id,
+            "native_thinking", thinking=final.get("thinking", ""),
+        )
+
+    # --- Strategy 2: draft -> critique -> refine, same model throughout ---
     on_status("(drafting...)")
     draft = chat_once(api_url, model, messages)
 
@@ -147,7 +176,7 @@ def run_turn(
 
     latency = time.time() - start
     perf_id = db.record_perf(model, len(user_prompt), True, latency)
-    return BoostResult(final_content, True, latency, perf_id)
+    return BoostResult(final_content, True, latency, perf_id, "draft_critique_refine")
 
 
 def apply_implicit_feedback(prev_perf_id: int | None, new_user_message: str) -> None:
