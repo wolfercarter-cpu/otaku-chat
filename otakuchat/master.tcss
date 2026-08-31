@@ -1,10 +1,11 @@
 Screen {
     layout: vertical;
+    background: $surface;
 }
 
 #chat-output {
     height: 1fr;
-    border: solid cyan;
+    border: solid #8b5cf6;
     margin: 1;
     padding: 1;
 }
@@ -12,12 +13,13 @@ Screen {
 #main-l1 {
     text-style: bold;
     padding: 1 2;
-    color: cyan;
+    color: #a855f7;
 }
 
 #main-i1 {
     dock: bottom;
     margin: 1;
+    border: tall #06b6d4;
 }
 
 PromptEditor {
@@ -27,7 +29,7 @@ PromptEditor {
 
 #prompt-editor-area {
     height: 1fr;
-    border: solid cyan;
+    border: solid #8b5cf6;
     margin: 1;
 }
 
@@ -36,5 +38,23 @@ PromptEditor {
     padding: 0 2;
     text-style: bold;
     background: $panel;
+    color: #06b6d4;
+}
+
+SessionBrowser, ModelPicker {
+    layout: vertical;
+    background: $surface;
+}
+
+#sess-header, #model-header {
+    text-style: bold;
+    padding: 1 2;
+    color: #a855f7;
+}
+
+#session-list, #model-list {
+    height: 1fr;
+    border: solid #8b5cf6;
+    margin: 1;
 }
 
