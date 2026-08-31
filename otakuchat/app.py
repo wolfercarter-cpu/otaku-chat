@@ -15,7 +15,7 @@ from textual.widgets import Input, Label, Markdown
 from . import config, context, db, memory, reasoning
 from .ollama_client import OllamaError, is_reachable, list_models
 from .pickers import ModelPicker, SessionBrowser
-from .widgets import PromptEditor
+from .widgets import HistoryInput, PromptEditor
 
 COMMANDS = [
     ("/help", "Show this list of commands."),
@@ -69,7 +69,7 @@ class OtakuChat(App):
     def compose(self) -> ComposeResult:
         yield Label("OtakuChat", id="main-l1")
         yield Markdown(self.conversation_history, id="chat-output")
-        yield Input(
+        yield HistoryInput(
             placeholder=">>> message, or /help for commands",
             id="main-i1",
         )
@@ -148,6 +148,10 @@ class OtakuChat(App):
         event.input.value = ""
         if not user_input.strip():
             return
+
+        db.add_input_history(user_input)
+        if isinstance(event.input, HistoryInput):
+            event.input.reload_history()
 
         cmd = user_input.strip()
         lower = cmd.lower()

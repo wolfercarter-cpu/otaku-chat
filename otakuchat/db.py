@@ -61,6 +61,12 @@ CREATE TABLE IF NOT EXISTS session_compaction (
     summary TEXT NOT NULL,
     updated_at REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS input_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
 """
 
 
@@ -228,3 +234,36 @@ def save_compaction(session_id: int, covered_through_message_id: int, summary: s
             "summary = excluded.summary, updated_at = excluded.updated_at",
             (session_id, covered_through_message_id, summary, time.time()),
         )
+
+
+# --- Input history (up/down recall across all sessions, aider-style) -----
+
+def add_input_history(text: str, limit: int = 500) -> None:
+    text = text.strip()
+    if not text:
+        return
+    with db() as conn:
+        # Skip immediate duplicate of the very last entry
+        last = conn.execute(
+            "SELECT text FROM input_history ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if last and last["text"] == text:
+            return
+        conn.execute(
+            "INSERT INTO input_history (text, created_at) VALUES (?, ?)",
+            (text, time.time()),
+        )
+        conn.execute(
+            "DELETE FROM input_history WHERE id NOT IN "
+            "(SELECT id FROM input_history ORDER BY id DESC LIMIT ?)",
+            (limit,),
+        )
+
+
+def get_input_history(limit: int = 500) -> list[str]:
+    """Oldest-first list of past inputs, ready for up/down recall."""
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT text FROM input_history ORDER BY id ASC LIMIT ?", (limit,)
+        ).fetchall()
+    return [r["text"] for r in rows]

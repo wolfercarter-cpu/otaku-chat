@@ -47,6 +47,51 @@ CORRECTION_HINTS = re.compile(
     re.I,
 )
 
+# Some Ollama model templates (chat-template quirks, not the native `thinking`
+# API field) leak chain-of-thought as literal <think>...</think> tags inside
+# `content` instead of the separate `thinking` field the API exposes for
+# well-behaved models. Adapted from aider's reasoning_tags.py: strip these
+# out of what the user sees, and surface the extracted content the same way
+# native thinking is surfaced, so the visible answer is always just the
+# answer regardless of which mechanism a given model/template uses.
+_INLINE_THINK_TAGS = ("think", "thinking", "reasoning")
+_INLINE_THINK_RE = re.compile(
+    r"<(" + "|".join(_INLINE_THINK_TAGS) + r")>(.*?)</\1>",
+    re.IGNORECASE | re.DOTALL,
+)
+_INLINE_THINK_UNCLOSED_RE = re.compile(
+    r"<(" + "|".join(_INLINE_THINK_TAGS) + r")>(.*)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def split_inline_thinking(text: str) -> tuple[str, str]:
+    """Extract any <think>/<thinking>/<reasoning> tagged content from a
+    model's raw output. Returns (visible_content, extracted_thinking).
+
+    Handles a still-open tag (mid-stream/truncated) by treating everything
+    after the opening tag as thinking, since a real answer never starts
+    mid-reasoning-block.
+    """
+    if "<" not in text:
+        return text, ""
+
+    thoughts = []
+
+    def _collect(match: re.Match) -> str:
+        thoughts.append(match.group(2).strip())
+        return ""
+
+    cleaned = _INLINE_THINK_RE.sub(_collect, text)
+
+    unclosed = _INLINE_THINK_UNCLOSED_RE.search(cleaned)
+    if unclosed:
+        thoughts.append(unclosed.group(2).strip())
+        cleaned = cleaned[: unclosed.start()]
+
+    return cleaned.strip(), "\n\n".join(t for t in thoughts if t)
+
+
 CRITIQUE_SYSTEM = (
     "You are a terse internal reviewer. You will be shown a user request and a draft "
     "answer to it from another instance of yourself. Find concrete mistakes, gaps, or "
@@ -124,7 +169,8 @@ def run_turn(
         final = chat_stream(api_url, model, messages, on_token)
         latency = time.time() - start
         perf_id = db.record_perf(model, len(user_prompt), False, latency)
-        return BoostResult(final.get("content", ""), False, latency, perf_id, "none")
+        content, leaked_thinking = split_inline_thinking(final.get("content", ""))
+        return BoostResult(content, False, latency, perf_id, "none", thinking=leaked_thinking)
 
     caps = get_capabilities(api_url, model)
 
@@ -134,9 +180,11 @@ def run_turn(
         final = chat_stream(api_url, model, messages, on_token, on_thinking=on_thinking, think=True)
         latency = time.time() - start
         perf_id = db.record_perf(model, len(user_prompt), True, latency)
+        content, leaked_thinking = split_inline_thinking(final.get("content", ""))
+        thinking = final.get("thinking", "") or leaked_thinking
         return BoostResult(
-            final.get("content", ""), True, latency, perf_id,
-            "native_thinking", thinking=final.get("thinking", ""),
+            content, True, latency, perf_id,
+            "native_thinking", thinking=thinking,
         )
 
     # --- Strategy 2: draft -> critique -> refine, same model throughout ---
@@ -176,7 +224,11 @@ def run_turn(
 
     latency = time.time() - start
     perf_id = db.record_perf(model, len(user_prompt), True, latency)
-    return BoostResult(final_content, True, latency, perf_id, "draft_critique_refine")
+    final_content, leaked_thinking = split_inline_thinking(final_content)
+    return BoostResult(
+        final_content, True, latency, perf_id, "draft_critique_refine",
+        thinking=leaked_thinking,
+    )
 
 
 def apply_implicit_feedback(prev_perf_id: int | None, new_user_message: str) -> None:
