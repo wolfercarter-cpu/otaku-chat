@@ -6,6 +6,7 @@ this database directly. It only ever sees curated text handed to it in
 the system prompt.
 """
 import json
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -198,6 +199,64 @@ def list_facts() -> list[str]:
     with db() as conn:
         rows = conn.execute("SELECT fact FROM memory_facts ORDER BY id ASC").fetchall()
     return [r["fact"] for r in rows]
+
+
+def count_facts() -> int:
+    with db() as conn:
+        row = conn.execute("SELECT COUNT(*) AS n FROM memory_facts").fetchone()
+    return row["n"] if row else 0
+
+
+_STOPWORDS = frozenset(
+    "a an the is are was were be been being of in on at to for with and or "
+    "but not this that these those it its i you he she they we my your his "
+    "her their our as by from".split()
+)
+
+
+def _tokenize(text: str) -> set[str]:
+    return {
+        w for w in re.findall(r"[a-z0-9]+", text.lower())
+        if w and w not in _STOPWORDS
+    }
+
+
+def relevant_facts(query: str, limit: int = 12) -> list[str]:
+    """Rank curated facts by Jaccard token overlap with `query` instead of
+    always returning the whole store — adapted (numpy/FTS5/trust-score
+    machinery stripped out) from hermes-agent's holographic memory
+    provider (plugins/memory/holographic/retrieval.py). otaku-chat's fact
+    count is capped small (prune_oldest_facts) so a plain Python pass over
+    every stored fact per turn is cheap; no virtual FTS5 table needed.
+
+    Falls back to the most-recent `limit` facts if the query has no usable
+    tokens (empty/short input) or nothing scores above zero — so relevant
+    memory retrieval degrades to "recency", never to nothing.
+    """
+    facts = list_facts()
+    if len(facts) <= limit:
+        return facts
+
+    query_tokens = _tokenize(query)
+    if not query_tokens:
+        return facts[-limit:]
+
+    scored = []
+    for fact in facts:
+        fact_tokens = _tokenize(fact)
+        if not fact_tokens:
+            continue
+        overlap = query_tokens & fact_tokens
+        union = query_tokens | fact_tokens
+        jaccard = len(overlap) / len(union) if union else 0.0
+        if jaccard > 0:
+            scored.append((jaccard, fact))
+
+    if not scored:
+        return facts[-limit:]
+
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return [fact for _, fact in scored[:limit]]
 
 
 def remove_fact(fact: str) -> None:

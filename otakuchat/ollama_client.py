@@ -86,6 +86,7 @@ def chat_stream(
     on_token: Callable[[str], None],
     on_thinking: Callable[[str], None] | None = None,
     think: bool = False,
+    options: dict | None = None,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> dict:
     """Stream a chat completion from Ollama, calling on_token per text chunk
@@ -95,12 +96,18 @@ def chat_stream(
     gpt-oss, ...) — only pass this for models get_capabilities() marks as
     thinking-capable; Ollama errors on models that don't support it.
 
+    options: Ollama's per-request generation options (temperature, top_p,
+    num_predict, seed, ...) — see config.get_generation_options(). Omitted
+    entirely when empty so Ollama uses the model's own defaults.
+
     Returns the final assembled message dict (role/content/thinking/tool_calls).
     """
     url = f"{_base(api_url)}/api/chat"
     payload = {"model": model, "messages": messages, "stream": True}
     if think:
         payload["think"] = True
+    if options:
+        payload["options"] = options
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url, data=data, headers={"Content-Type": "application/json"}
@@ -146,6 +153,7 @@ def chat_once(
     model: str,
     messages: list[dict],
     think: bool = False,
+    options: dict | None = None,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> str:
     """Non-streaming single-shot chat call. Used by internal reasoning/curation
@@ -154,6 +162,8 @@ def chat_once(
     payload = {"model": model, "messages": messages, "stream": False}
     if think:
         payload["think"] = True
+    if options:
+        payload["options"] = options
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url, data=data, headers={"Content-Type": "application/json"}

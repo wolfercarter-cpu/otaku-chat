@@ -30,6 +30,17 @@ DEFAULTS = {
         # enough to warrant a boost pass when mode=auto. Self-adjusted over time.
         "complexity_threshold": "220",
     },
+    "GENERATION": {
+        # Ollama /api/chat "options" — leave any value blank to omit it and
+        # use Ollama's own model default. Ported from oterm's chat_edit.py
+        # per-chat parameter modal, flattened into config.ini instead of a
+        # new UI/command (this app tries to add as few commands as possible;
+        # editing config.ini via the existing /config command already covers it).
+        "temperature": "",
+        "top_p": "",
+        "max_tokens": "",
+        "seed": "",
+    },
     "MEMORY": {
         "curation_interval_turns": "8",
         "max_memory_chars": "6000",
@@ -153,6 +164,44 @@ def get_complexity_threshold() -> int:
 
 def save_complexity_threshold(value: int) -> None:
     _set("BOOST", "complexity_threshold", str(value))
+
+
+# --- GENERATION (Ollama /api/chat "options") ---
+def get_generation_options() -> dict:
+    """Return only the options the user has actually set (non-blank in
+    config.ini), typed and ready to pass straight through as Ollama's
+    `options` dict. Blank/unset fields are omitted entirely so Ollama
+    falls back to the model's own defaults rather than us guessing one."""
+    parser = _get_config()
+    if not parser.has_section("GENERATION"):
+        return {}
+
+    options: dict = {}
+    raw_temp = parser.get("GENERATION", "temperature", fallback="").strip()
+    if raw_temp:
+        try:
+            options["temperature"] = float(raw_temp)
+        except ValueError:
+            pass
+    raw_top_p = parser.get("GENERATION", "top_p", fallback="").strip()
+    if raw_top_p:
+        try:
+            options["top_p"] = float(raw_top_p)
+        except ValueError:
+            pass
+    raw_max_tokens = parser.get("GENERATION", "max_tokens", fallback="").strip()
+    if raw_max_tokens:
+        try:
+            options["num_predict"] = int(raw_max_tokens)
+        except ValueError:
+            pass
+    raw_seed = parser.get("GENERATION", "seed", fallback="").strip()
+    if raw_seed:
+        try:
+            options["seed"] = int(raw_seed)
+        except ValueError:
+            pass
+    return options
 
 
 # --- MEMORY ---

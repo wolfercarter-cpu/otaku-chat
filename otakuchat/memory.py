@@ -14,6 +14,12 @@ from . import config, db
 from .ollama_client import chat_once
 from .redact import redact_secrets
 
+# Below this many curated facts, always include the full store unranked
+# (keeps the system prompt byte-stable for KV-cache reuse). Above it,
+# render_memory_block ranks facts by relevance to the current query
+# instead — see its docstring.
+RELEVANCE_THRESHOLD = 20
+
 CURATION_SYSTEM = (
     "You extract durable, reusable facts from a conversation for long-term memory. "
     "A durable fact is a stable preference, correction, identity detail, or environment "
@@ -75,14 +81,32 @@ def curate_from_turns(api_url: str, model: str, turns: list[dict]) -> list[str]:
     return added
 
 
-def render_memory_block(max_chars: int | None = None) -> str:
+def render_memory_block(query: str | None = None, max_chars: int | None = None) -> str:
     """Render curated facts as a compact block for injection into the
     system prompt. Also mirrors to the on-disk MEMORY.md so /memory can
-    show/edit it like a normal file."""
+    show/edit it like a normal file.
+
+    When the store is small, every fact is always included (unranked,
+    insertion order) — this keeps the system prompt byte-stable turn to
+    turn so Ollama can reuse its KV cache, matching Hermes's "prompt
+    caching is sacred" rule. Once the fact count crosses
+    RELEVANCE_THRESHOLD, dumping everything into every prompt stops
+    scaling (irrelevant facts crowd the budget and dilute attention), so
+    facts are instead ranked by Jaccard token overlap against `query`
+    (db.relevant_facts, ported from hermes-agent's holographic memory
+    provider) and only the top N are included. This deliberately trades
+    cache-prefix stability for relevance once the store is big enough
+    that relevance actually matters more than a stable prefix.
+    """
     max_chars = max_chars or config.get_max_memory_chars()
-    facts = db.list_facts()
-    if not facts:
+    total = db.count_facts()
+    if total == 0:
         return ""
+
+    if query and total > RELEVANCE_THRESHOLD:
+        facts = db.relevant_facts(query, limit=RELEVANCE_THRESHOLD)
+    else:
+        facts = db.list_facts()
 
     lines = [f"- {f}" for f in facts]
     block = "## Curated Memory\n\n" + "\n".join(lines) + "\n"

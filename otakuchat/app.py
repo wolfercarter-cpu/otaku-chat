@@ -98,14 +98,23 @@ class OtakuChat(App):
 
     # -- system prompt assembly --------------------------------------
 
-    def build_system_prompt(self, force: bool = False) -> str:
+    def build_system_prompt(self, query: str = "", force: bool = False) -> str:
         """Assemble the system prompt, but reuse the cached string unless
         the underlying facts actually changed — keeps the prefix
         byte-stable across turns so Ollama can reuse its KV cache instead
-        of reprocessing the whole system+memory block every message."""
+        of reprocessing the whole system+memory block every message.
+
+        Below memory.RELEVANCE_THRESHOLD facts this caching is exact (the
+        full fact list is always included, so the fingerprint alone is
+        sufficient). Above the threshold, render_memory_block ranks facts
+        by relevance to `query` and the cache is intentionally bypassed —
+        see memory.render_memory_block's docstring for the tradeoff.
+        """
         facts_fingerprint = tuple(db.list_facts())
+        over_threshold = len(facts_fingerprint) > memory.RELEVANCE_THRESHOLD
         if (
             not force
+            and not over_threshold
             and self._system_prompt_cache is not None
             and facts_fingerprint == self._memory_facts_fingerprint
         ):
@@ -117,19 +126,24 @@ class OtakuChat(App):
         except FileNotFoundError:
             soul_text = "You are a helpful, direct local AI chat assistant."
 
-        memory_block = memory.render_memory_block()
+        memory_block = memory.render_memory_block(query=query)
         parts = [soul_text]
         if memory_block:
             parts.append(memory_block)
         prompt = "\n\n".join(parts)
 
-        self._system_prompt_cache = prompt
-        self._memory_facts_fingerprint = facts_fingerprint
+        if not over_threshold:
+            self._system_prompt_cache = prompt
+            self._memory_facts_fingerprint = facts_fingerprint
         return prompt
 
     def build_messages(self) -> list[dict]:
-        messages = [{"role": "system", "content": self.build_system_prompt()}]
-        messages.extend(context.get_effective_messages(self.session_id))
+        recent = context.get_effective_messages(self.session_id)
+        last_user = next(
+            (m["content"] for m in reversed(recent) if m["role"] == "user"), ""
+        )
+        messages = [{"role": "system", "content": self.build_system_prompt(query=last_user)}]
+        messages.extend(recent)
         if self.active_pattern:
             pattern_text = patterns.get_pattern(self.active_pattern)
             if pattern_text:

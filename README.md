@@ -94,7 +94,24 @@ The header shows the active model plus its live capability badges
 - `otakuchat/memory.py` — periodic, budgeted self-curation of durable facts
   into persistent memory (modeled on Hermes's memory tool, but the model
   never runs a command to do it — the app makes a hidden side-call, then
-  validates/writes the result itself)
+  validates/writes the result itself). Below `RELEVANCE_THRESHOLD` (20)
+  facts, every fact is always included, unranked, so the system prompt
+  stays byte-stable for KV-cache reuse. Above it, `db.relevant_facts`
+  (Jaccard token-overlap scoring, adapted from hermes-agent's holographic
+  memory provider with its numpy/HRR machinery stripped out) ranks facts
+  against the current user message and only the top N make it into the
+  prompt — trading cache-prefix stability for relevance once the store is
+  big enough that dumping everything in stops making sense.
+- `otakuchat/ollama_client.py` / `otakuchat/config.py` GENERATION section —
+  Ollama `/api/chat` generation options (temperature, top_p, max_tokens,
+  seed), ported from oterm's per-chat parameter modal but flattened into
+  `config.ini` (edited via the existing `/config` command) rather than a
+  new modal/command. Any field left blank is omitted from the request
+  entirely so Ollama falls back to the model's own default instead of the
+  app silently guessing one. The internal draft->critique review pass
+  deliberately does NOT inherit these — it's an unseen quality check, not
+  a visible answer, and shouldn't inherit e.g. a high creative-writing
+  temperature meant for the final response.
 - `otakuchat/app.py` — Textual TUI. Caches the assembled system prompt and
   only rebuilds it when curated memory actually changes, keeping the prefix
   byte-stable across turns so Ollama can reuse its KV cache instead of
@@ -125,3 +142,13 @@ harness:
   self-refine, LTM, CoD, self-consistency, AoT, reflexion, standard) as
   `otakuchat/strategies.py`, auto-picked per prompt inside the existing
   boost layer instead of surfacing as its own command.
+- **hermes-agent** (holographic memory plugin, `plugins/memory/holographic/`):
+  Jaccard token-overlap relevance scoring for curated facts (`db.relevant_facts`)
+  — the numpy-based HRR compositional-retrieval algebra was left out entirely
+  (too heavy a dependency for this app's scope), keeping only the
+  lightweight keyword-overlap ranking layer that needed no new dependency.
+- **oterm** (`app/chat_edit.py`): per-chat Ollama generation parameters
+  (temperature/top_p/max_tokens/seed) — ported as a `GENERATION` section in
+  `config.ini` rather than oterm's dedicated modal screen, since editing
+  config.ini via the existing `/config` command already covers it without
+  a new command.

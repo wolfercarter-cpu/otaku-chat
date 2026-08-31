@@ -166,9 +166,10 @@ def run_turn(
     user_prompt = messages[-1]["content"] if messages and messages[-1]["role"] == "user" else ""
     boosted = should_boost(model, user_prompt)
     start = time.time()
+    options = config.get_generation_options()
 
     if not boosted:
-        final = chat_stream(api_url, model, messages, on_token)
+        final = chat_stream(api_url, model, messages, on_token, options=options)
         latency = time.time() - start
         perf_id = db.record_perf(model, len(user_prompt), False, latency)
         content, leaked_thinking = split_inline_thinking(final.get("content", ""))
@@ -190,7 +191,10 @@ def run_turn(
     # --- Strategy 1: native server-side thinking (cheap, 1 call) ---
     if caps.get("thinking"):
         on_status(f"(thinking, {strat_name}...)")
-        final = chat_stream(api_url, model, messages, on_token, on_thinking=on_thinking, think=True)
+        final = chat_stream(
+            api_url, model, messages, on_token, on_thinking=on_thinking,
+            think=True, options=options,
+        )
         latency = time.time() - start
         perf_id = db.record_perf(model, len(user_prompt), True, latency)
         content, leaked_thinking = split_inline_thinking(final.get("content", ""))
@@ -202,7 +206,7 @@ def run_turn(
 
     # --- Strategy 2: draft -> critique -> refine, same model throughout ---
     on_status(f"(drafting, {strat_name}...)")
-    draft = chat_once(api_url, model, messages)
+    draft = chat_once(api_url, model, messages, options=options)
 
     on_status("(reviewing draft...)")
     critique_messages = [
@@ -212,6 +216,11 @@ def run_turn(
             "content": f"USER REQUEST:\n{user_prompt}\n\nDRAFT ANSWER:\n{draft}",
         },
     ]
+    # Deliberately NOT passing the user's generation options to the
+    # critique pass — it's an internal quality check, not a visible answer,
+    # and benefits from staying close to the model's own defaults rather
+    # than inheriting e.g. a high user-set temperature meant for creative
+    # final answers.
     critique = chat_once(api_url, model, critique_messages)
 
     if critique.strip().upper().startswith("OK"):
@@ -232,7 +241,7 @@ def run_turn(
                 ),
             },
         ]
-        final_msg = chat_stream(api_url, model, refine_messages, on_token)
+        final_msg = chat_stream(api_url, model, refine_messages, on_token, options=options)
         final_content = final_msg.get("content", "") or draft
 
     latency = time.time() - start
