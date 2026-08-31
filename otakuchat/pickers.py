@@ -5,7 +5,33 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, Label, OptionList
 from textual.widgets.option_list import Option
 
-from . import db
+from . import db, patterns
+
+
+class PatternPicker(Screen):
+    """Pick a curated Fabric-style prompt pattern to apply to the next message."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def compose(self):
+        yield Label("Patterns — Enter to apply, Esc to cancel", id="pattern-header")
+        yield OptionList(id="pattern-list")
+
+    def on_mount(self) -> None:
+        opt_list = self.query_one("#pattern-list", OptionList)
+        self.names = patterns.list_patterns()
+        if not self.names:
+            opt_list.add_option(Option("No patterns installed.", disabled=True))
+            return
+        for name in self.names:
+            desc = patterns.describe(name, max_chars=60)
+            opt_list.add_option(Option(f"{name} — {desc}", id=name))
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(event.option.id)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class SessionBrowser(Screen):

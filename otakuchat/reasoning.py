@@ -38,6 +38,7 @@ from typing import Callable
 
 from . import config, db
 from .ollama_client import chat_once, chat_stream, get_capabilities
+from . import strategies as strategy_lib
 
 CODE_HINTS = re.compile(r"```|def |class |import |function |SELECT |sudo |systemctl |\{|\}|;\n")
 STEP_HINTS = re.compile(r"\b(step|first|then|after that|finally|plan|design|architect|debug|refactor)\b", re.I)
@@ -143,6 +144,7 @@ class BoostResult:
     perf_id: int
     strategy: str  # "none" | "native_thinking" | "draft_critique_refine"
     thinking: str = ""
+    substrategy: str = ""  # Fabric-derived reasoning strategy name, e.g. "cot", "tot"
 
 
 def run_turn(
@@ -174,9 +176,20 @@ def run_turn(
 
     caps = get_capabilities(api_url, model)
 
+    # Auto-pick a Fabric-derived reasoning strategy for this prompt (cot,
+    # tot, self-refine, ltm, cod, self-consistent, ...) and fold its short
+    # instruction in as extra system guidance for whichever engine below
+    # actually runs — this is what varies HOW the model thinks, while the
+    # native-thinking-vs-draft/critique/refine choice below stays the
+    # mechanism for WHETHER an extra reasoning pass happens at all.
+    strat_name = strategy_lib.pick_strategy(user_prompt)
+    strat = strategy_lib.get_strategy(strat_name)
+    if strat and strat.get("prompt"):
+        messages = list(messages) + [{"role": "system", "content": strat["prompt"]}]
+
     # --- Strategy 1: native server-side thinking (cheap, 1 call) ---
     if caps.get("thinking"):
-        on_status("(thinking...)")
+        on_status(f"(thinking, {strat_name}...)")
         final = chat_stream(api_url, model, messages, on_token, on_thinking=on_thinking, think=True)
         latency = time.time() - start
         perf_id = db.record_perf(model, len(user_prompt), True, latency)
@@ -184,11 +197,11 @@ def run_turn(
         thinking = final.get("thinking", "") or leaked_thinking
         return BoostResult(
             content, True, latency, perf_id,
-            "native_thinking", thinking=thinking,
+            "native_thinking", thinking=thinking, substrategy=strat_name,
         )
 
     # --- Strategy 2: draft -> critique -> refine, same model throughout ---
-    on_status("(drafting...)")
+    on_status(f"(drafting, {strat_name}...)")
     draft = chat_once(api_url, model, messages)
 
     on_status("(reviewing draft...)")
@@ -227,7 +240,7 @@ def run_turn(
     final_content, leaked_thinking = split_inline_thinking(final_content)
     return BoostResult(
         final_content, True, latency, perf_id, "draft_critique_refine",
-        thinking=leaked_thinking,
+        thinking=leaked_thinking, substrategy=strat_name,
     )
 
 

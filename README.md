@@ -31,6 +31,7 @@ uv run otakuchat
 - `/export <file>` — export the current session's transcript to markdown
 - `/add <file>`    — attach a file's contents to context (read-only, secrets redacted)
 - `/think`         — cycle boost mode: auto / always / off
+- `/pattern [name]`— apply a curated prompt pattern to your next message (Fabric-style); no arg opens a picker, `/pattern off` clears it
 - `/prompt`        — open a full-screen editor for a long/multi-line prompt
 - `/quit`          — exit
 
@@ -50,7 +51,7 @@ The header shows the active model plus its live capability badges
 - `otakuchat/ollama_client.py` — streaming chat, model discovery, and
   `/api/show` capability detection (thinking / tools / vision) against the
   local Ollama HTTP API only — no other providers, by design
-- `otakuchat/reasoning.py` — the aggregation/self-boost layer. Two strategies,
+- `otakuchat/reasoning.py` — the aggregation/self-boost layer. Two engines,
   chosen automatically per model:
   - **native thinking**: when Ollama reports a model supports it
     (deepseek-r1, qwen3, gpt-oss, ...), ask for real server-side
@@ -60,12 +61,31 @@ The header shows the active model plus its live capability badges
     reasoning mode, e.g. llama3.2, qwen2.5-coder): run the same model
     against itself three times to simulate the same effect
 
+  Whichever engine runs, a **reasoning strategy** is auto-picked per prompt
+  from `otakuchat/strategies.py` (`data/strategies/` ported from Fabric) —
+  chain-of-thought, tree-of-thought, self-refine, least-to-most,
+  chain-of-draft, self-consistency, atom-of-thought — and its short
+  instruction is folded into the boosted pass as extra system guidance, so
+  a code-fix prompt gets self-refine-flavored guidance while a "compare
+  these approaches" prompt gets tree-of-thought instead of the app always
+  reasoning the same way regardless of what kind of ask it is. Not
+  user-selectable by design — the heuristic (`strategies.pick_strategy`)
+  reads prompt shape (code hints, design/compare language, multi-step
+  phrasing, question density) and just picks.
+
   Also strips stray inline `<think>`/`<reasoning>` tags some model
   chat-templates leak into `content` instead of using the API's `thinking`
   field, so the visible answer is always just the answer. Boosting is
   adaptive (`auto` mode) and self-tunes its complexity threshold from a
   rolling perf/feedback signal per model — corrections from the user nudge
   it to boost more; wasted boosts nudge it to boost less.
+- `otakuchat/patterns.py` — a curated ~26-pattern library (`otakuchat/patterns/`,
+  ported from Fabric's `data/patterns/`, which ships 256 — this is a
+  hand-picked general-use subset: summarize, extract_wisdom, review_code,
+  explain_code, translate, create_git_diff_commit, ...). `/pattern` applies
+  one to your very next message only (single-use, consumed at the point the
+  turn is built in `OtakuChat.build_messages`) as an extra trailing system
+  message, so it never touches the cached/byte-stable base system prompt.
 - `otakuchat/context.py` — trajectory compaction. Once a session's tracked
   size crosses a token budget, older turns (outside a protected tail window
   that always ends on an assistant turn) get folded into one cached summary
@@ -99,3 +119,9 @@ harness:
 - **aider**: inline `<think>` tag stripping for models that leak reasoning
   into `content`, size/budget-aware recursive context compaction ending on
   clean turn boundaries, persistent shell-style input history recall.
+- **Fabric** (danielmiessler/fabric): a curated subset of `data/patterns/`
+  (256 → ~26 general-use ones) as `otakuchat/patterns/` behind `/pattern`,
+  and all of `data/strategies/` (9 reasoning-strategy JSONs — CoT, ToT,
+  self-refine, LTM, CoD, self-consistency, AoT, reflexion, standard) as
+  `otakuchat/strategies.py`, auto-picked per prompt inside the existing
+  boost layer instead of surfacing as its own command.

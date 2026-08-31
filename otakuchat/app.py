@@ -12,9 +12,9 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Label, Markdown
 
-from . import config, context, db, memory, reasoning
+from . import config, context, db, memory, patterns, reasoning
 from .ollama_client import OllamaError, get_capabilities, is_reachable, list_models
-from .pickers import ModelPicker, RenameSession, SessionBrowser
+from .pickers import ModelPicker, PatternPicker, RenameSession, SessionBrowser
 from .widgets import ChatInput, PromptEditor
 
 COMMANDS = [
@@ -28,6 +28,7 @@ COMMANDS = [
     ("/export <file>", "Export the current session's transcript to a markdown file."),
     ("/add <file>", "Attach a file's contents to the conversation context."),
     ("/think", "Cycle the reasoning boost mode: auto -> always -> off."),
+    ("/pattern [name]", "Apply a curated prompt pattern (Fabric-style) to your next message, or clear with /pattern off."),
     ("/prompt", "Open a full-screen editor for composing a long/multi-line prompt."),
     ("/quit", "Exit OtakuChat (alias: /exit)."),
 ]
@@ -53,6 +54,7 @@ class OtakuChat(App):
         self.session_id: int = db.create_session("New chat", self.model)
         self.turns_since_curation = 0
         self.last_perf_id: int | None = None
+        self.active_pattern: str | None = None
 
         # Cache the assembled system prompt string and only rebuild it when
         # memory/soul actually change (memory.py rewrites are infrequent —
@@ -128,6 +130,16 @@ class OtakuChat(App):
     def build_messages(self) -> list[dict]:
         messages = [{"role": "system", "content": self.build_system_prompt()}]
         messages.extend(context.get_effective_messages(self.session_id))
+        if self.active_pattern:
+            pattern_text = patterns.get_pattern(self.active_pattern)
+            if pattern_text:
+                # Injected as a separate trailing system message (not folded
+                # into the cached base prompt) so the byte-stable KV-cache
+                # prefix is untouched and the pattern only affects this turn.
+                messages.append({"role": "system", "content": pattern_text})
+            # Single-use: consumed exactly here, at the point the turn is
+            # actually assembled, so there's no race with the UI thread.
+            self.active_pattern = None
         return messages
 
     # -- UI helpers ----------------------------------------------------
@@ -237,6 +249,23 @@ class OtakuChat(App):
             self.append_to_ui(f"\n\n*System: reasoning boost mode set to '{nxt}'.*")
             return
 
+        if lower.startswith("/pattern"):
+            arg = cmd[len("/pattern"):].strip()
+            if not arg:
+                self.push_screen(PatternPicker(), self.handle_pattern_pick)
+            elif arg.lower() == "off":
+                self.active_pattern = None
+                self.append_to_ui("\n\n*System: pattern cleared.*")
+            elif patterns.get_pattern(arg) is not None:
+                self.active_pattern = arg
+                self.append_to_ui(
+                    f"\n\n*System: pattern `{arg}` will be applied to your next message "
+                    "(single-use, then cleared).*"
+                )
+            else:
+                self.append_to_ui(f"\n\n*System: no such pattern `{arg}`. Try /pattern with no argument to browse.*")
+            return
+
         if lower.startswith("/model"):
             arg = cmd[len("/model"):].strip()
             if arg:
@@ -299,6 +328,15 @@ class OtakuChat(App):
         config.save_model(model_name)
         self.refresh_header()
         self.append_to_ui(f"\n\n*System: switched active model to `{model_name}`.*")
+
+    def handle_pattern_pick(self, pattern_name: str | None) -> None:
+        if not pattern_name:
+            return
+        self.active_pattern = pattern_name
+        self.append_to_ui(
+            f"\n\n*System: pattern `{pattern_name}` will be applied to your next message "
+            "(single-use, then cleared).*"
+        )
 
     def handle_rename(self, new_name: str | None) -> None:
         if not new_name:
