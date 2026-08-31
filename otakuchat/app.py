@@ -19,7 +19,7 @@ from .widgets import PromptEditor
 
 BANNER = (
     "OtakuChat — local, chat-only, self-curating.\n"
-    "Type a message, or try /model /memory /new /sessions /add /think /prompt /quit"
+    "Type a message, or try /model /memory /config /new /sessions /add /think /prompt /quit"
 )
 
 
@@ -48,7 +48,7 @@ class OtakuChat(App):
         yield Label("OtakuChat", id="main-l1")
         yield Markdown(self.conversation_history, id="chat-output")
         yield Input(
-            placeholder=">>> message, or /model /memory /new /sessions /add /think /prompt /quit",
+            placeholder=">>> message, or /model /memory /config /new /sessions /add /think /prompt /quit",
             id="main-i1",
         )
 
@@ -134,6 +134,16 @@ class OtakuChat(App):
             with self.suspend():
                 subprocess.run(shlex.split(config.get_editor()) + [config.get_memory_path()])
             self.append_to_ui("\n\n*System: closed memory editor.*")
+            return
+
+        if lower == "/config":
+            with self.suspend():
+                subprocess.run(shlex.split(config.get_editor()) + [str(config.CONFIG_FILE)])
+            self.model = config.get_model()
+            self.api_url = config.get_api_url()
+            self.append_to_ui(
+                "\n\n*System: closed config editor. Model/API/boost settings reloaded.*"
+            )
             return
 
         if lower == "/think":
