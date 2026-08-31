@@ -10,6 +10,8 @@ DB_FILE = DATA_DIR / "otakuchat.db"
 
 DEFAULT_SOUL_FILE = CONFIG_DIR / "SOUL.md"
 DEFAULT_MEMORY_FILE = CONFIG_DIR / "MEMORY.md"
+DEFAULT_FACTS_FILE = CONFIG_DIR / "FACTS.md"
+DEFAULT_SNIPPETS_FILE = CONFIG_DIR / "SNIPPETS.md"
 
 DEFAULTS = {
     "GENERAL": {
@@ -22,6 +24,8 @@ DEFAULTS = {
     "PATHS": {
         "soul": str(DEFAULT_SOUL_FILE),
         "memory": str(DEFAULT_MEMORY_FILE),
+        "facts": str(DEFAULT_FACTS_FILE),
+        "snippets": str(DEFAULT_SNIPPETS_FILE),
     },
     "BOOST": {
         # auto | always | off — auto self-tunes per model from perf stats
@@ -52,6 +56,23 @@ DEFAULTS = {
         "max_context_messages": "30",
         # always send the most recent N raw messages uncompressed
         "protect_tail_messages": "12",
+    },
+    "SEARCH": {
+        # Brave Web Search API key. Leave blank to disable web search
+        # entirely — no key means no network call, ever.
+        "brave_api_key": "",
+        "max_results": "5",
+    },
+    "FACTS": {
+        "max_links_stored": "200",
+        # how many search-result URLs get filed per query, and how many
+        # bookmarks can surface into a single turn
+        "results_per_turn": "2",
+    },
+    "SNIPPETS": {
+        "max_snippets_stored": "100",
+        "max_code_chars": "4000",
+        "results_per_turn": "2",
     },
 }
 
@@ -95,6 +116,19 @@ def _get_config() -> ConfigParser:
                 "## Curated Memory\n\n"
                 "(OtakuChat writes durable facts about the user and itself here "
                 "as conversations happen. Nothing here yet.)\n"
+            )
+        if not DEFAULT_FACTS_FILE.exists():
+            DEFAULT_FACTS_FILE.write_text(
+                "# Facts\n\n"
+                "(OtakuChat bookmarks URLs a web search actually returned for a "
+                "topic here, grouped by topic, once web search is configured "
+                "and a topic comes up. Nothing here yet.)\n"
+            )
+        if not DEFAULT_SNIPPETS_FILE.exists():
+            DEFAULT_SNIPPETS_FILE.write_text(
+                "# Snippets\n\n"
+                "(OtakuChat curates reusable code snippets here as "
+                "conversations happen. Nothing here yet.)\n"
             )
 
     return parser
@@ -147,6 +181,14 @@ def get_soul_path() -> str:
 
 def get_memory_path() -> str:
     return _get("PATHS", "memory", str(DEFAULT_MEMORY_FILE))
+
+
+def get_facts_path() -> str:
+    return _get("PATHS", "facts", str(DEFAULT_FACTS_FILE))
+
+
+def get_snippets_path() -> str:
+    return _get("PATHS", "snippets", str(DEFAULT_SNIPPETS_FILE))
 
 
 # --- BOOST (self-curating reasoning aggregation layer) ---
@@ -220,3 +262,34 @@ def get_max_context_messages() -> int:
 
 def get_protect_tail_messages() -> int:
     return int(_get("CONTEXT", "protect_tail_messages", "12"))
+
+
+# --- SEARCH (Brave Web Search grounding) ---
+def get_brave_api_key() -> str:
+    return _get("SEARCH", "brave_api_key", "").strip()
+
+
+def get_search_max_results() -> int:
+    return int(_get("SEARCH", "max_results", "5"))
+
+
+# --- FACTS (topic -> URL bookmarks, fed by web search) ---
+def get_max_links_stored() -> int:
+    return int(_get("FACTS", "max_links_stored", "200"))
+
+
+def get_facts_results_per_turn() -> int:
+    return int(_get("FACTS", "results_per_turn", "2"))
+
+
+# --- SNIPPETS (self-curating code-snippet library) ---
+def get_max_snippets_stored() -> int:
+    return int(_get("SNIPPETS", "max_snippets_stored", "100"))
+
+
+def get_max_snippet_code_chars() -> int:
+    return int(_get("SNIPPETS", "max_code_chars", "4000"))
+
+
+def get_snippets_results_per_turn() -> int:
+    return int(_get("SNIPPETS", "results_per_turn", "2"))

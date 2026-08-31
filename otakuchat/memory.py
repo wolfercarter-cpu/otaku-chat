@@ -5,13 +5,10 @@ app periodically asks the model (in a hidden, structured side-call) to
 propose durable facts worth remembering from the recent conversation, then
 the app itself validates/dedupes/writes them. The model has zero write
 access of its own — it only ever sees the curated result show back up in
-its next system prompt.
+its next system prompt. See curation.py for the side-call/JSON-extraction
+plumbing this shares with snippets.py's self-curation pass.
 """
-import json
-import re
-
-from . import config, db
-from .ollama_client import chat_once
+from . import config, curation, db
 from .redact import redact_secrets
 
 # Below this many curated facts, always include the full store unranked
@@ -31,45 +28,18 @@ CURATION_SYSTEM = (
 )
 
 
-def _extract_json_array(text: str) -> list[str]:
-    text = text.strip()
-    match = re.search(r"\[.*\]", text, re.DOTALL)
-    if not match:
-        return []
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(data, list):
-        return []
-    return [str(x).strip() for x in data if isinstance(x, (str, int, float)) and str(x).strip()]
-
-
 def curate_from_turns(api_url: str, model: str, turns: list[dict]) -> list[str]:
     """Ask the model to propose durable facts from a slice of conversation.
     Returns the list of NEW facts actually written to the store."""
-    if not turns:
+    raw = curation.run_side_call(api_url, model, CURATION_SYSTEM, turns)
+    if raw is None:
         return []
 
-    transcript = "\n".join(
-        f"{t['role'].upper()}: {t['content']}" for t in turns if t.get("content")
-    )
-    if not transcript.strip():
-        return []
-
-    messages = [
-        {"role": "system", "content": CURATION_SYSTEM},
-        {"role": "user", "content": transcript[-6000:]},
-    ]
-    try:
-        raw = chat_once(api_url, model, messages)
-    except Exception:
-        return []
-
-    candidates = _extract_json_array(raw)
     added = []
-    for fact in candidates:
-        fact = fact.strip().strip("-* ")
+    for item in curation.extract_json_array(raw):
+        if not isinstance(item, (str, int, float)):
+            continue
+        fact = str(item).strip().strip("-* ")
         if not fact or len(fact) > 300:
             continue
         fact, _ = redact_secrets(fact)  # never let a leaked secret become a permanent fact
@@ -133,10 +103,7 @@ def maybe_curate(api_url: str, model: str, session_id: int, turns_since_last: in
     if turns_since_last < interval:
         return []
 
-    all_msgs = db.get_messages(session_id)
-    recent = all_msgs[-(interval * 2):]
-    turns = [{"role": m["role"], "content": m["content"]} for m in recent if m["role"] in ("user", "assistant")]
-
+    turns = curation.recent_turns_for_curation(session_id, interval)
     added = curate_from_turns(api_url, model, turns)
     render_memory_block()
     return added

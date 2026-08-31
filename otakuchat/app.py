@@ -1,18 +1,21 @@
-"""OtakuChat — a Hermes-inspired, chat-only TUI harness for local Ollama models.
+"""OtakuChat — a chat-only TUI harness for local Ollama models that curates
+its own context: memory, topic bookmarks, and code snippets all self-write
+from the conversation and only ever resurface when actually relevant.
 
 No shell/tool execution is ever exposed to the model. The only "actions" it
 can take are: answer, and (indirectly, via app-side hidden calls) contribute
-candidate facts to curated memory. Everything else — sessions, boosting,
-self-tuning — is orchestrated by the app around it.
+candidates to its own curated stores. Everything else — sessions, boosting,
+self-tuning, search grounding — is orchestrated by the app around it.
 """
 import shlex
 import subprocess
+from typing import Callable
 
 from textual import work
 from textual.app import App, ComposeResult
-from textual.widgets import Input, Label, Markdown
+from textual.widgets import Label, Markdown
 
-from . import config, context, db, memory, patterns, reasoning
+from . import config, context, db, facts, memory, patterns, reasoning, search, snippets
 from .ollama_client import OllamaError, get_capabilities, is_reachable, list_models
 from .pickers import FileBrowser, ModelPicker, PatternPicker, RenameSession, SessionBrowser
 from .widgets import ChatInput, PromptEditor
@@ -21,6 +24,8 @@ COMMANDS = [
     ("/help", "Show this list of commands."),
     ("/model [name]", "List installed Ollama models to pick from, or switch directly by name."),
     ("/memory", "Open the curated memory file (self-learned facts) in your editor."),
+    ("/facts", "Open the curated topic->URL bookmark file (from web search grounding) in your editor."),
+    ("/snippets", "Open the curated code-snippet library in your editor."),
     ("/config", "Open config.ini (model, api url, boost mode) in your editor."),
     ("/new", "Start a fresh session, clearing the visible chat."),
     ("/sessions", "Browse and resume a past session."),
@@ -55,6 +60,7 @@ class OtakuChat(App):
         self.turns_since_curation = 0
         self.last_perf_id: int | None = None
         self.active_pattern: str | None = None
+        self._last_search_note: str | None = None
 
         # Cache the assembled system prompt string and only rebuild it when
         # memory/soul actually change (memory.py rewrites are infrequent —
@@ -137,13 +143,25 @@ class OtakuChat(App):
             self._memory_facts_fingerprint = facts_fingerprint
         return prompt
 
-    def build_messages(self) -> list[dict]:
+    def build_messages(self, on_status: Callable[[str], None] | None = None) -> list[dict]:
         recent = context.get_effective_messages(self.session_id)
         last_user = next(
             (m["content"] for m in reversed(recent) if m["role"] == "user"), ""
         )
         messages = [{"role": "system", "content": self.build_system_prompt(query=last_user)}]
         messages.extend(recent)
+        search_block = self.maybe_web_search(last_user, on_status)
+        if search_block:
+            # Same rationale as the pattern injection below: a trailing
+            # system message so it grounds only this turn without touching
+            # the cached/byte-stable base system prompt.
+            messages.append({"role": "system", "content": search_block})
+        facts_block = facts.render_facts_block(last_user)
+        if facts_block:
+            messages.append({"role": "system", "content": facts_block})
+        snippets_block = snippets.render_snippets_block(last_user)
+        if snippets_block:
+            messages.append({"role": "system", "content": snippets_block})
         if self.active_pattern:
             pattern_text = patterns.get_pattern(self.active_pattern)
             if pattern_text:
@@ -155,6 +173,40 @@ class OtakuChat(App):
             # actually assembled, so there's no race with the UI thread.
             self.active_pattern = None
         return messages
+
+    def maybe_web_search(
+        self, query: str, on_status: Callable[[str], None] | None = None
+    ) -> str | None:
+        """Always-on Brave web search grounding: if an API key is configured
+        (config.ini [SEARCH] brave_api_key), every turn gets fresh web
+        results for the current user message folded in as a hidden system
+        message — no model-invoked tool call, no heuristic gating. No key
+        configured means this never fires and never touches the network.
+
+        Best-effort: a failed search (network down, bad key, rate limit)
+        just means the turn proceeds without web grounding rather than
+        breaking the chat.
+        """
+        self._last_search_note = None
+        api_key = config.get_brave_api_key()
+        if not api_key or not query.strip():
+            return None
+        if on_status:
+            on_status("searching web...")
+        try:
+            results = search.search_web(query, api_key, config.get_search_max_results())
+        except search.SearchError:
+            return None
+        if not results:
+            return None
+        self._last_search_note = f"included {len(results)} web result(s) for this turn"
+        # Feed FACTS.md: file the URLs that actually had relevant info for
+        # this query under it as the topic, so a recurring question can be
+        # pointed at a known-good source later (see facts.render_facts_block,
+        # which only ever surfaces these back when a future query actually
+        # matches — never a wholesale replay of the bookmark store).
+        facts.curate_from_search(query, results)
+        return search.format_results(query, results)
 
     # -- UI helpers ----------------------------------------------------
 
@@ -243,6 +295,18 @@ class OtakuChat(App):
             with self.suspend():
                 subprocess.run(shlex.split(config.get_editor()) + [config.get_memory_path()])
             self.append_to_ui("\n\n*System: closed memory editor.*")
+            return
+
+        if lower == "/facts":
+            with self.suspend():
+                subprocess.run(shlex.split(config.get_editor()) + [config.get_facts_path()])
+            self.append_to_ui("\n\n*System: closed facts editor.*")
+            return
+
+        if lower == "/snippets":
+            with self.suspend():
+                subprocess.run(shlex.split(config.get_editor()) + [config.get_snippets_path()])
+            self.append_to_ui("\n\n*System: closed snippets editor.*")
             return
 
         if lower == "/config":
@@ -452,10 +516,10 @@ class OtakuChat(App):
         self.active_thinking = ""
         self.call_from_thread(self.status_to_ui, "thinking...")
 
-        messages = self.build_messages()
-
         def on_status(note: str) -> None:
             self.call_from_thread(self.status_to_ui, note.strip("()"))
+
+        messages = self.build_messages(on_status=on_status)
 
         def on_token(chunk: str) -> None:
             self.call_from_thread(self.stream_to_ui, chunk)
@@ -501,19 +565,36 @@ class OtakuChat(App):
         self.last_perf_id = result.perf_id
         self.turns_since_curation += 1
 
+        if self._last_search_note:
+            self.call_from_thread(self.append_to_ui, f"\n\n*[websearch] {self._last_search_note}*")
+
         note = reasoning.self_tune_threshold(self.model)
         if note:
             self.call_from_thread(self.append_to_ui, f"\n\n*[self-tune] {note}*")
 
-        added = memory.maybe_curate(
-            self.api_url, self.model, self.session_id, self.turns_since_curation
+        # Same cadence/window for both curation passes — they're two
+        # independent side-calls over the same recent slice of the
+        # conversation, so capture the counter once before either can
+        # reset it.
+        curation_turns = self.turns_since_curation
+        added_facts = memory.maybe_curate(
+            self.api_url, self.model, self.session_id, curation_turns
         )
-        if added:
+        added_snippets = snippets.maybe_curate(
+            self.api_url, self.model, self.session_id, curation_turns
+        )
+        if added_facts or added_snippets:
             self.turns_since_curation = 0
+        if added_facts:
             self._system_prompt_cache = None  # facts changed, must rebuild
-            summary = "; ".join(added[:3])
+            summary = "; ".join(added_facts[:3])
             self.call_from_thread(
                 self.append_to_ui, f"\n\n*[memory] learned: {summary}*"
+            )
+        if added_snippets:
+            summary = ", ".join(added_snippets[:3])
+            self.call_from_thread(
+                self.append_to_ui, f"\n\n*[snippets] saved: {summary}*"
             )
 
         compacted = context.maybe_compact(self.api_url, self.model, self.session_id)

@@ -9,7 +9,7 @@ import json
 import time
 import urllib.request
 import urllib.error
-from typing import Callable, Iterator
+from typing import Callable
 
 DEFAULT_TIMEOUT = 120
 

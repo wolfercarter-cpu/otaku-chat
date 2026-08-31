@@ -7,17 +7,17 @@ from textual.screen import Screen
 from textual.widgets import Input, Static, TextArea
 
 
-class HistoryInput(Input):
-    """Input with aider-style persistent up/down history recall.
+class HistoryRecallMixin:
+    """Shared aider-style persistent up/down history recall.
 
-    Kept around for the small modal screens (rename, session name, etc.)
-    that still want a plain single-line Input. The main chat box uses
-    ChatInput below.
+    Both HistoryInput (single-line Input) and ChatInput (TextArea) used to
+    carry their own copy of this exact state machine, differing only in how
+    each widget reads/writes its current text and places its cursor.
+    Subclasses bridge that gap via _history_text()/_history_set_text().
 
     History is loaded lazily from db.get_input_history() and walked with
     Up/Down like a shell. Editing a recalled line and pressing Enter still
-    submits normally (App.on_input_submitted handles persistence of new
-    entries); this widget only manages in-memory recall state.
+    submits normally; this mixin only manages in-memory recall state.
     """
 
     def __init__(self, *args, **kwargs):
@@ -25,50 +25,71 @@ class HistoryInput(Input):
         self._history: list[str] = []
         self._history_index: int = 0
         self._draft: str = ""
-        self._loaded = False
+        self._history_loaded = False
 
-    def _ensure_loaded(self) -> None:
-        if self._loaded:
+    def _history_text(self) -> str:
+        raise NotImplementedError
+
+    def _history_set_text(self, text: str) -> None:
+        raise NotImplementedError
+
+    def _ensure_history_loaded(self) -> None:
+        if self._history_loaded:
             return
         from . import db
 
         self._history = db.get_input_history()
         self._history_index = len(self._history)
-        self._loaded = True
+        self._history_loaded = True
 
     def reload_history(self) -> None:
         """Call after a new entry is persisted so recall includes it."""
-        self._loaded = False
-        self._ensure_loaded()
+        self._history_loaded = False
+        self._ensure_history_loaded()
+
+    def _recall_up(self) -> None:
+        if not self._history:
+            return
+        if self._history_index == len(self._history):
+            self._draft = self._history_text()
+        if self._history_index > 0:
+            self._history_index -= 1
+            self._history_set_text(self._history[self._history_index])
+
+    def _recall_down(self) -> None:
+        if not self._history:
+            return
+        if self._history_index < len(self._history) - 1:
+            self._history_index += 1
+            self._history_set_text(self._history[self._history_index])
+        elif self._history_index == len(self._history) - 1:
+            self._history_index += 1
+            self._history_set_text(self._draft)
+
+
+class HistoryInput(HistoryRecallMixin, Input):
+    """Input with aider-style persistent up/down history recall.
+
+    Kept around for the small modal screens (rename, session name, etc.)
+    that still want a plain single-line Input. The main chat box uses
+    ChatInput below.
+    """
+
+    def _history_text(self) -> str:
+        return self.value
+
+    def _history_set_text(self, text: str) -> None:
+        self.value = text
+        self.cursor_position = len(self.value)
 
     async def _on_key(self, event: events.Key) -> None:
-        self._ensure_loaded()
+        self._ensure_history_loaded()
 
-        if event.key == "up":
-            if not self._history:
-                return
-            if self._history_index == len(self._history):
-                self._draft = self.value
-            if self._history_index > 0:
-                self._history_index -= 1
-                self.value = self._history[self._history_index]
-                self.cursor_position = len(self.value)
-            event.prevent_default()
-            event.stop()
-            return
-
-        if event.key == "down":
-            if not self._history:
-                return
-            if self._history_index < len(self._history) - 1:
-                self._history_index += 1
-                self.value = self._history[self._history_index]
-            elif self._history_index == len(self._history) - 1:
-                self._history_index += 1
-                self.value = self._draft
+        if event.key in ("up", "down"):
+            if event.key == "up":
+                self._recall_up()
             else:
-                return
-            self.cursor_position = len(self.value)
+                self._recall_down()
             event.prevent_default()
             event.stop()
             return
@@ -81,7 +102,7 @@ class HistoryInput(Input):
         await super()._on_key(event)
 
 
-class ChatInput(TextArea):
+class ChatInput(HistoryRecallMixin, TextArea):
     """The main chat box: an auto-growing TextArea, adapted from oterm's
     PostableTextArea (oterm/app/widgets/prompt.py).
 
@@ -123,10 +144,6 @@ class ChatInput(TextArea):
         super().__init__(*args, **kwargs)
         self.show_line_numbers = False
         self.soft_wrap = True
-        self._history: list[str] = []
-        self._history_index: int = 0
-        self._draft: str = ""
-        self._loaded = False
 
     def on_mount(self) -> None:
         self._resize_to_content()
@@ -134,6 +151,13 @@ class ChatInput(TextArea):
     def _resize_to_content(self) -> None:
         line_count = max(self.wrapped_document.height, 1)
         self.styles.height = min(line_count, self.MAX_LINES) + self.BORDER_ROWS
+
+    def _history_text(self) -> str:
+        return self.text
+
+    def _history_set_text(self, text: str) -> None:
+        self.text = text
+        self.move_cursor(self.document.end)
 
     async def _on_key(self, event: events.Key) -> None:
         # Only intercept Up/Down for history recall when the box is a
@@ -155,42 +179,6 @@ class ChatInput(TextArea):
         # nothing for any key that wasn't Up/Down. Always defer to super()
         # here.
         await super()._on_key(event)
-
-    def _ensure_history_loaded(self) -> None:
-        if self._loaded:
-            return
-        from . import db
-
-        self._history = db.get_input_history()
-        self._history_index = len(self._history)
-        self._loaded = True
-
-    def reload_history(self) -> None:
-        self._loaded = False
-        self._ensure_history_loaded()
-
-    def _recall_up(self) -> None:
-        if not self._history:
-            return
-        if self._history_index == len(self._history):
-            self._draft = self.text
-        if self._history_index > 0:
-            self._history_index -= 1
-            self.text = self._history[self._history_index]
-            self.move_cursor(self.document.end)
-
-    def _recall_down(self) -> None:
-        if not self._history:
-            return
-        if self._history_index < len(self._history) - 1:
-            self._history_index += 1
-            self.text = self._history[self._history_index]
-        elif self._history_index == len(self._history) - 1:
-            self._history_index += 1
-            self.text = self._draft
-        else:
-            return
-        self.move_cursor(self.document.end)
 
     def action_submit(self) -> None:
         self.post_message(ChatInput.Submitted(self, self.text))
