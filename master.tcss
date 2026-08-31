@@ -1,0 +1,40 @@
+Screen {
+    layout: vertical;
+}
+
+#chat-output {
+    height: 1fr;
+    border: solid cyan;
+    margin: 1;
+    padding: 1;
+}
+
+#main-l1 {
+    text-style: bold;
+    padding: 1 2;
+    color: cyan;
+}
+
+#main-i1 {
+    dock: bottom;
+    margin: 1;
+}
+
+PromptEditor {
+    layout: vertical;
+    background: $surface;
+}
+
+#prompt-editor-area {
+    height: 1fr;
+    border: solid cyan;
+    margin: 1;
+}
+
+#prompt-cheat-sheet {
+    dock: bottom;
+    padding: 0 2;
+    text-style: bold;
+    background: $panel;
+}
+
