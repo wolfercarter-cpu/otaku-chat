@@ -10,6 +10,23 @@ own conversation history to stay inside a model's context window.
 
 ## Run
 
+Straight from GitHub, no clone needed:
+
+```bash
+uv tool install --force git+https://github.com/wolfercarter-cpu/otaku-chat
+otakuchat
+```
+
+`uv` isn't required — this is a standard `pyproject.toml` package
+(hatchling build backend, one dependency), so `pipx` works the same way:
+
+```bash
+pipx install git+https://github.com/wolfercarter-cpu/otaku-chat
+otakuchat
+```
+
+Or from a local clone:
+
 ```bash
 uv tool install --force .
 otakuchat
@@ -19,14 +36,6 @@ or during dev:
 
 ```bash
 uv run otakuchat
-```
-
-`uv` isn't required — this is a standard `pyproject.toml` package
-(hatchling build backend, one dependency), so `pipx` works the same way:
-
-```bash
-pipx install .
-otakuchat
 ```
 
 ## Slash commands
