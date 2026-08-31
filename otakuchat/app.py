@@ -14,7 +14,7 @@ from textual.widgets import Input, Label, Markdown
 
 from . import config, context, db, memory, patterns, reasoning
 from .ollama_client import OllamaError, get_capabilities, is_reachable, list_models
-from .pickers import ModelPicker, PatternPicker, RenameSession, SessionBrowser
+from .pickers import FileBrowser, ModelPicker, PatternPicker, RenameSession, SessionBrowser
 from .widgets import ChatInput, PromptEditor
 
 COMMANDS = [
@@ -26,7 +26,7 @@ COMMANDS = [
     ("/sessions", "Browse and resume a past session."),
     ("/rename [name]", "Rename the current session."),
     ("/export <file>", "Export the current session's transcript to a markdown file."),
-    ("/add <file>", "Attach a file's contents to the conversation context."),
+    ("/add [file]", "Attach a file's contents to the conversation context; no arg opens a file browser."),
     ("/think", "Cycle the reasoning boost mode: auto -> always -> off."),
     ("/pattern [name]", "Apply a curated prompt pattern (Fabric-style) to your next message, or clear with /pattern off."),
     ("/prompt", "Open a full-screen editor for composing a long/multi-line prompt."),
@@ -291,8 +291,12 @@ class OtakuChat(App):
                 self.open_model_picker()
             return
 
-        if lower.startswith("/add "):
-            self.handle_add_file(cmd[5:].strip())
+        if lower == "/add" or lower.startswith("/add "):
+            arg = cmd[len("/add"):].strip()
+            if arg:
+                self.handle_add_file(arg)
+            else:
+                self.push_screen(FileBrowser(), self.handle_file_pick)
             return
 
         self.process_chat_message(user_input)
@@ -351,6 +355,11 @@ class OtakuChat(App):
             f"\n\n*System: pattern `{pattern_name}` will be applied to your next message "
             "(single-use, then cleared).*"
         )
+
+    def handle_file_pick(self, filepath: str | None) -> None:
+        if not filepath:
+            return
+        self.handle_add_file(filepath)
 
     def handle_rename(self, new_name: str | None) -> None:
         if not new_name:

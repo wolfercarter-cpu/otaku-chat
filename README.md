@@ -29,7 +29,7 @@ uv run otakuchat
 - `/sessions`      — browse and resume past sessions
 - `/rename [name]` — rename the current session
 - `/export <file>` — export the current session's transcript to markdown
-- `/add <file>`    — attach a file's contents to context (read-only, secrets redacted); image files (.png/.jpg/.jpeg/.gif/.webp/.bmp) are attached as a vision message instead
+- `/add [file]`    — attach a file's contents to context (read-only, secrets redacted); no arg opens a file browser; image files (.png/.jpg/.jpeg/.gif/.webp/.bmp) are attached as a vision message instead
 - `/think`         — cycle boost mode: auto / always / off
 - `/pattern [name]`— apply a curated prompt pattern to your next message (Fabric-style); no arg opens a picker, `/pattern off` clears it
 - `/prompt`        — open a full-screen editor for a long/multi-line prompt
@@ -159,3 +159,8 @@ harness:
   first if the active model has no vision capability. Reused the existing
   `/add` command rather than porting oterm's dedicated image-picker
   `DirectoryTree` screen.
+- **Textual's own `DirectoryTree` widget** (user-supplied snippet): `/add`
+  with no argument now opens a `FileBrowser` modal (`pickers.py`) instead
+  of requiring a typed path — a `FilteredDirectoryTree` hides dotfiles/
+  dotdirs, picking a file dispatches through the same `handle_add_file`
+  path (text or image) as typing `/add <path>` always did.

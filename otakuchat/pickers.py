@@ -1,11 +1,48 @@
+from pathlib import Path
+from typing import Iterable
+
 from textual.screen import Screen
 from textual.app import ComposeResult
 from textual.containers import Container
 from textual.screen import ModalScreen
-from textual.widgets import Input, Label, OptionList
+from textual.widgets import DirectoryTree, Input, Label, OptionList
 from textual.widgets.option_list import Option
 
 from . import db, patterns
+
+
+class FilteredDirectoryTree(DirectoryTree):
+    """A DirectoryTree that hides dotfiles/dotdirs (.git, .cache, ...)."""
+
+    def filter_paths(self, paths: Iterable[Path]) -> Iterable[Path]:
+        return [path for path in paths if not path.name.startswith(".")]
+
+
+class FileBrowser(Screen):
+    """Browse the filesystem and pick a file to /add — click a file or
+    press Enter on it to attach it, Esc to cancel. Replaces having to type
+    a path by hand."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, start_path: str | None = None) -> None:
+        super().__init__()
+        self.start_path = start_path or str(Path.cwd())
+
+    def compose(self) -> ComposeResult:
+        yield Label("Pick a file to attach — Esc to cancel", id="file-header")
+        yield FilteredDirectoryTree(self.start_path, id="file-tree")
+
+    def on_mount(self) -> None:
+        self.query_one("#file-tree", FilteredDirectoryTree).focus()
+
+    def on_directory_tree_file_selected(
+        self, event: DirectoryTree.FileSelected
+    ) -> None:
+        self.dismiss(str(event.path))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class PatternPicker(Screen):
