@@ -14,6 +14,7 @@ DEFAULT_FACTS_FILE = CONFIG_DIR / "FACTS.md"
 DEFAULT_SNIPPETS_FILE = CONFIG_DIR / "SNIPPETS.md"
 DEFAULT_VAULT_DIR = DATA_DIR / "vault"
 DEFAULT_SEED_DIR = DATA_DIR / "seed"
+DEFAULT_FUNCTIONS_FILE = CONFIG_DIR / "FUNCTIONS.py"
 
 DEFAULTS = {
     "GENERAL": {
@@ -28,6 +29,7 @@ DEFAULTS = {
         "memory": str(DEFAULT_MEMORY_FILE),
         "facts": str(DEFAULT_FACTS_FILE),
         "snippets": str(DEFAULT_SNIPPETS_FILE),
+        "functions": str(DEFAULT_FUNCTIONS_FILE),
     },
     "BOOST": {
         # auto | always | off — auto self-tunes per model from perf stats
@@ -116,6 +118,17 @@ DEFAULTS = {
         "max_chunk_chars": "1500",
         # git clone / zip download / single-file download timeout
         "import_timeout_s": "60",
+    },
+    "YOUTUBE": {
+        # a fetched transcript longer than this is truncated before being
+        # handed to the model (full transcript is what got cached; this
+        # only bounds what a single summarize/explain call sends)
+        "max_transcript_chars": "20000",
+    },
+    "FAAS": {
+        # wall-clock seconds a single model-requested function call is
+        # allowed to run in its subprocess before being killed
+        "call_timeout_s": "15",
     },
 }
 
@@ -259,6 +272,10 @@ def get_facts_path() -> str:
 
 def get_snippets_path() -> str:
     return _get("PATHS", "snippets", str(DEFAULT_SNIPPETS_FILE))
+
+
+def get_functions_path() -> str:
+    return _get("PATHS", "functions", str(DEFAULT_FUNCTIONS_FILE))
 
 
 # --- BOOST (self-curating reasoning aggregation layer) ---
@@ -418,3 +435,11 @@ def get_vault_max_chunk_chars() -> int:
 
 def get_vault_import_timeout() -> int:
     return _get_int("VAULT", "import_timeout_s", 60)
+
+
+def get_youtube_max_transcript_chars() -> int:
+    return _get_int("YOUTUBE", "max_transcript_chars", 20000)
+
+
+def get_faas_call_timeout() -> int:
+    return _get_int("FAAS", "call_timeout_s", 15)

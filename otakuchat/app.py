@@ -2,10 +2,16 @@
 its own context: memory, topic bookmarks, and code snippets all self-write
 from the conversation and only ever resurface when actually relevant.
 
-No shell/tool execution is ever exposed to the model. The only "actions" it
-can take are: answer, and (indirectly, via app-side hidden calls) contribute
-candidates to its own curated stores. Everything else — sessions, boosting,
-self-tuning, search grounding — is orchestrated by the app around it.
+No shell/tool execution is ever exposed to the model directly. The one
+deliberate exception: user-defined functions in FUNCTIONS.py ("FaaS
+hands", see faas.py) that the model can request via a plain ```call
+fenced block in its reply — but every single call, model-requested or
+manually fired, is gated behind an explicit Yes/No confirmation
+(faas_ui.FunctionCallConfirm) before it runs, in an isolated subprocess,
+never inline. Everything else the model can influence is indirect: it
+only ever contributes candidates to its own curated stores (memory,
+facts, snippets, vault). Sessions, boosting, self-tuning, and search
+grounding are all orchestrated by the app around it.
 """
 from typing import Callable
 
@@ -13,8 +19,9 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.widgets import Label, Markdown
 
-from . import config, context, db, extract, facts, memory, patterns, reasoning, search, snippets, vault
+from . import config, context, db, extract, faas, facts, memory, patterns, reasoning, search, snippets, vault, youtube
 from .editor import Slate
+from .faas_ui import FunctionArgsPrompt, FunctionCallConfirm, FunctionCallResult, build_functions_menu
 from .inputer import TextPrompt
 from .ollama_client import OllamaError, get_capabilities, is_reachable, list_models
 from .options import MENU_ITEMS
@@ -31,6 +38,8 @@ COMMANDS = [
     ("/snippets", "Open the curated code-snippet library in your editor."),
     ("/vault", "Browse, remove, seed, or wipe imported vault content (fuzzy-searchable)."),
     ("/import [url]", "Import a git repo (.git), .zip, or single file into the vault; no arg opens a URL prompt."),
+    ("/functions", "Browse and manually fire user-defined functions (the model can also request calls; every call needs your Yes/No)."),
+    ("/youtube <url>", "Fetch a YouTube video's transcript and summarize/explain it."),
     ("/config", "Open config.ini (model, api url, boost mode) in your editor."),
     ("/new", "Start a fresh session, clearing the visible chat."),
     ("/sessions", "Browse and resume a past session, or press 'd' on one to delete it permanently."),
@@ -170,6 +179,9 @@ class OtakuChat(App):
         vault_block = vault.render_vault_block(last_user)
         if vault_block:
             messages.append({"role": "system", "content": vault_block})
+        functions_block = faas.render_functions_block()
+        if functions_block:
+            messages.append({"role": "system", "content": functions_block})
         if self.active_pattern:
             pattern_text = patterns.get_pattern(self.active_pattern)
             if pattern_text:
@@ -378,6 +390,21 @@ class OtakuChat(App):
                 self.push_screen(VaultImportPrompt(), self.handle_import_url)
             return
 
+        if lower == "/functions":
+            self.push_screen(build_functions_menu(), self.handle_functions_menu_pick)
+            return
+
+        if lower.startswith("/youtube"):
+            arg = cmd[len("/youtube"):].strip()
+            if arg:
+                self.handle_youtube_request(arg)
+            else:
+                self.push_screen(
+                    TextPrompt("YouTube URL or video ID to summarize:", placeholder="https://youtu.be/..."),
+                    self.handle_youtube_request,
+                )
+            return
+
         if lower == "/config":
             self.push_screen(Slate(str(config.CONFIG_FILE)), self.handle_config_editor_close)
             return
@@ -470,6 +497,95 @@ class OtakuChat(App):
             self.call_from_thread(self.append_to_ui, f"\n\n*Import failed: {e}*")
             return
         self.call_from_thread(self.append_to_ui, f"\n\n*System: {message}*")
+
+    # --- YouTube transcript summarize/explain --------------------------
+
+    def handle_youtube_request(self, url: str | None) -> None:
+        if not url:
+            return
+        self.append_to_ui(f"\n\n*System: fetching transcript for '{url}'...*")
+        self.run_youtube_bg(url)
+
+    @work(thread=True)
+    def run_youtube_bg(self, url: str) -> None:
+        try:
+            summary = youtube.summarize_transcript(url, self.api_url, self.model)
+        except youtube.YouTubeError as e:
+            self.call_from_thread(self.append_to_ui, f"\n\n*YouTube fetch failed: {e}*")
+            return
+        self.call_from_thread(
+            self.append_to_ui, f"\n\n**YouTube summary ({url}):**\n\n{summary}"
+        )
+
+    # --- FaaS "hands": manual fire from /functions ----------------------
+
+    def handle_functions_menu_pick(self, func_name: str | None) -> None:
+        if not func_name:
+            return
+        if func_name == "__manage__":
+            self.push_screen(Slate(str(faas.functions_path())), self.handle_editor_close("functions"))
+            return
+
+        infos = {info.name: info for info in faas.list_functions()}
+        info = infos.get(func_name)
+        if info and info.params:
+            self.push_screen(
+                FunctionArgsPrompt(
+                    f"Args for {func_name}({', '.join(info.params)}):",
+                    placeholder="key=value, key2=value2",
+                ),
+                lambda args_text: self._confirm_manual_call(func_name, args_text),
+            )
+        else:
+            self._confirm_manual_call(func_name, "")
+
+    def _confirm_manual_call(self, func_name: str, args_text: str | None) -> None:
+        if args_text is None:
+            return
+        try:
+            kwargs = faas.parse_kwargs_string(func_name, args_text)
+        except faas.FaasError as e:
+            self.append_to_ui(f"\n\n*System: could not parse args — {e}*")
+            return
+        self.push_screen(
+            FunctionCallConfirm(func_name, kwargs, source="manual"),
+            lambda approved: self._execute_confirmed_call(func_name, kwargs, approved),
+        )
+
+    def _execute_confirmed_call(self, func_name: str, kwargs: dict, approved: bool | None) -> None:
+        if not approved:
+            self.append_to_ui(f"\n\n*System: call to '{func_name}' declined.*")
+            return
+        self.append_to_ui(f"\n\n*System: running '{func_name}'...*")
+        self.run_function_call_bg(func_name, kwargs, notify_chat=True)
+
+    @work(thread=True)
+    def run_function_call_bg(self, func_name: str, kwargs: dict, notify_chat: bool = False) -> None:
+        ok, result = faas.run_function(func_name, kwargs)
+        if notify_chat:
+            status = "succeeded" if ok else "failed"
+            self.call_from_thread(
+                self.append_to_ui, f"\n\n*[functions] '{func_name}' {status}: {result}*"
+            )
+        self.call_from_thread(self.push_screen, FunctionCallResult(func_name, ok, result))
+
+    # --- FaaS "hands": model-requested calls from a ```call block -------
+
+    def maybe_handle_model_call_requests(self, reply_text: str) -> None:
+        """After a turn's reply is fully rendered, check for a ```call
+        block and — if found — walk the user through the same Yes/No
+        confirmation as a manual fire before anything runs. Only the
+        FIRST call request in a reply is acted on; a model padding its
+        reply with multiple blocks doesn't get to fire them all
+        unattended."""
+        requests = faas.find_call_requests(reply_text)
+        if not requests:
+            return
+        request = requests[0]
+        self.push_screen(
+            FunctionCallConfirm(request.func_name, request.kwargs, source="model"),
+            lambda approved: self._execute_confirmed_call(request.func_name, request.kwargs, approved),
+        )
 
     def handle_menu_pick(self, command: str | None) -> None:
         if command:
@@ -714,6 +830,8 @@ class OtakuChat(App):
         db.add_message(self.session_id, "assistant", result.content, boosted=result.boosted)
         self.last_perf_id = result.perf_id
         self.turns_since_curation += 1
+
+        self.call_from_thread(self.maybe_handle_model_call_requests, result.content)
 
         if self._last_search_note:
             self.call_from_thread(self.append_to_ui, f"\n\n*[websearch] {self._last_search_note}*")

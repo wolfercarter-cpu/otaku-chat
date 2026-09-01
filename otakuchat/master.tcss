@@ -77,7 +77,7 @@ ModalListPicker, TextPrompt, ConfirmDialog {
     align: center middle;
 }
 
-#picker-c1, #iptr-c1, #confirm-c1 {
+#picker-c1, #iptr-c1, #confirm-c1, #faas-confirm-c1, #faas-result-c1 {
     width: 60%;
     height: auto;
     border: solid #8b5cf6;
@@ -85,14 +85,23 @@ ModalListPicker, TextPrompt, ConfirmDialog {
     background: $surface;
 }
 
-ModalListPicker #picker-header, #iptr-l1, #confirm-l1 {
+ModalListPicker #picker-header, #iptr-l1, #confirm-l1, #faas-confirm-l1, #faas-result-l1 {
     text-style: bold;
     color: #a855f7;
     padding-bottom: 1;
 }
 
-#confirm-hint {
+#confirm-hint, #faas-confirm-hint, #faas-result-hint {
     color: $text-muted;
+}
+
+#faas-confirm-l2 {
+    color: #06b6d4;
+    padding-bottom: 1;
+}
+
+#faas-result-l2 {
+    padding-bottom: 1;
 }
 
 Slate {

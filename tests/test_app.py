@@ -487,3 +487,170 @@ async def test_vault_content_grounds_a_turn_via_build_messages(app_env):
         messages = app.build_messages()
     joined = " ".join(m["content"] for m in messages)
     assert "GitHub Actions" in joined
+
+
+# --- /functions (FaaS hands) --------------------------------------------
+
+async def test_functions_command_opens_menu(app_env):
+    from otakuchat.pickers import ListPicker
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        app.handle_command("/functions")
+        await _settle(pilot)
+        assert isinstance(app.screen, ListPicker)
+
+
+async def test_functions_block_grounds_build_messages(app_env):
+    from otakuchat import faas
+
+    faas.functions_path().parent.mkdir(parents=True, exist_ok=True)
+    faas.functions_path().write_text('def add(a: int, b: int) -> int:\n    """Add two numbers."""\n    return a + b\n')
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        messages = app.build_messages()
+    joined = " ".join(m["content"] for m in messages)
+    assert "add(a: int, b: int)" in joined
+
+
+async def test_manual_fire_no_args_goes_straight_to_confirm(app_env):
+    from otakuchat import faas
+    from otakuchat.faas_ui import FunctionCallConfirm
+
+    faas.functions_path().parent.mkdir(parents=True, exist_ok=True)
+    faas.functions_path().write_text("def ping():\n    return 'pong'\n")
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        app.handle_functions_menu_pick("ping")
+        await _settle(pilot)
+        assert isinstance(app.screen, FunctionCallConfirm)
+
+
+async def test_manual_fire_with_args_prompts_first(app_env):
+    from otakuchat import faas
+    from otakuchat.faas_ui import FunctionArgsPrompt
+
+    faas.functions_path().parent.mkdir(parents=True, exist_ok=True)
+    faas.functions_path().write_text("def greet(name):\n    return f'hi {name}'\n")
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        app.handle_functions_menu_pick("greet")
+        await _settle(pilot)
+        assert isinstance(app.screen, FunctionArgsPrompt)
+
+
+async def test_manual_fire_confirmed_yes_runs_and_reports_success(app_env):
+    from otakuchat import faas
+
+    faas.functions_path().parent.mkdir(parents=True, exist_ok=True)
+    faas.functions_path().write_text("def ping():\n    return 'pong'\n")
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        app.handle_functions_menu_pick("ping")
+        await _settle(pilot)
+        await pilot.press("y")
+        await _settle(pilot, n=6)
+        assert "ping" in app.conversation_history
+        assert "succeeded" in app.conversation_history
+
+
+async def test_manual_fire_confirmed_no_never_runs(app_env):
+    from otakuchat import faas
+
+    faas.functions_path().parent.mkdir(parents=True, exist_ok=True)
+    faas.functions_path().write_text("def ping():\n    return 'pong'\n")
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        app.handle_functions_menu_pick("ping")
+        await _settle(pilot)
+        await pilot.press("n")
+        await _settle(pilot, n=4)
+        assert "declined" in app.conversation_history
+        assert "succeeded" not in app.conversation_history
+
+
+async def test_manage_entry_opens_slate_editor(app_env):
+    from otakuchat.editor import Slate
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        app.handle_functions_menu_pick("__manage__")
+        await _settle(pilot)
+        assert isinstance(app.screen, Slate)
+
+
+async def test_model_requested_call_triggers_confirm_dialog(app_env):
+    """The end-to-end safety property: a model's ```call block in a real
+    turn's reply must NEVER execute without the same Yes/No gate a
+    manual fire goes through."""
+    from otakuchat import faas
+    from otakuchat.faas_ui import FunctionCallConfirm
+
+    faas.functions_path().parent.mkdir(parents=True, exist_ok=True)
+    faas.functions_path().write_text("def ping():\n    return 'pong'\n")
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        app.maybe_handle_model_call_requests("Sure, calling it now.\n```call\nping()\n```")
+        await _settle(pilot)
+        assert isinstance(app.screen, FunctionCallConfirm)
+        assert app.screen.func_name == "ping"
+
+
+async def test_model_requested_call_with_no_call_block_does_nothing(app_env):
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        before_screen = app.screen
+        app.maybe_handle_model_call_requests("Just a normal reply, nothing to call.")
+        await _settle(pilot)
+        assert app.screen is before_screen
+
+
+# --- /youtube ------------------------------------------------------------
+
+async def test_youtube_no_arg_opens_prompt(app_env):
+    from otakuchat.inputer import TextPrompt as TP
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        app.handle_command("/youtube")
+        await _settle(pilot)
+        assert isinstance(app.screen, TP)
+
+
+async def test_youtube_with_url_fetches_and_summarizes(app_env):
+    from otakuchat import youtube
+
+    class _FakeSnippet:
+        def __init__(self, text):
+            self.text = text
+
+    class _FakeFetched:
+        def __init__(self, snippets):
+            self.snippets = snippets
+
+    fake_transcript = _FakeFetched([_FakeSnippet("This is a test video about pytest.")])
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        with mock.patch.object(youtube.YouTubeTranscriptApi, "fetch", return_value=fake_transcript):
+            with mock.patch.object(youtube.ollama_client, "chat_once", return_value="A short summary."):
+                app.handle_command("/youtube https://youtu.be/dQw4w9WgXcQ")
+                await _settle(pilot, n=6)
+        assert "A short summary." in app.conversation_history

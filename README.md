@@ -2,9 +2,11 @@
 
 A chat-only TUI harness for local Ollama models that curates its own
 context instead of trusting a raw, ever-growing transcript. No shell tool
-is ever exposed to the model — the only thing it can do is answer, and
-(indirectly, through hidden app-side side-calls) feed candidates into its
-own curated stores. Around that, the app tracks its own performance,
+is ever exposed to the model. It can answer, contribute (indirectly,
+through hidden app-side side-calls) candidates to its own curated stores,
+and — the one deliberate exception, see "FaaS hands" below — request a
+call to a function YOU wrote, always gated behind an explicit Yes/No
+confirmation. Around all that, the app tracks its own performance,
 self-tunes how hard it "thinks" per model and per prompt, and compacts its
 own conversation history to stay inside a model's context window.
 
@@ -48,6 +50,8 @@ uv run otakuchat
 - `/snippets`      — open the curated code-snippet library in the built-in Slate editor
 - `/vault`         — browse, remove, seed, or wipe imported vault content (fuzzy-searchable list)
 - `/import [url]`  — import a git repo (.git), .zip, or single file into the vault; no arg opens a URL prompt
+- `/functions`     — browse and manually fire user-defined functions ("FaaS hands" — see below); every call needs your Yes/No, no exceptions
+- `/youtube [url]` — fetch a YouTube video's transcript and have the active model summarize/explain it; no arg opens a URL prompt
 - `/config`        — open config.ini (model, api url, boost mode) in the built-in Slate editor
 - `/new`           — start a fresh session
 - `/sessions`      — browse and resume past sessions
