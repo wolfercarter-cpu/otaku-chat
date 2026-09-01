@@ -6,6 +6,7 @@ dialog — not just call an internal method directly.
 """
 
 from unittest import mock
+from pathlib import Path
 
 import pytest
 
@@ -330,3 +331,101 @@ async def test_maybe_web_search_extracts_page_content_for_top_results(app_env):
     assert block is not None
     assert "This is the actual full article body text." in block
     assert "1 with full page content" in app._last_search_note
+
+
+# --- /memory /facts /snippets /config open the in-app Slate editor --------
+
+async def test_memory_command_opens_slate_editor(app_env):
+    from otakuchat.editor import Slate
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        app.handle_command("/memory")
+        await _settle(pilot)
+        assert isinstance(app.screen, Slate)
+        assert app.screen.current_file_path == Path(config.get_memory_path())
+
+
+async def test_facts_command_opens_slate_editor(app_env):
+    from otakuchat.editor import Slate
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        app.handle_command("/facts")
+        await _settle(pilot)
+        assert isinstance(app.screen, Slate)
+        assert app.screen.current_file_path == Path(config.get_facts_path())
+
+
+async def test_snippets_command_opens_slate_editor(app_env):
+    from otakuchat.editor import Slate
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        app.handle_command("/snippets")
+        await _settle(pilot)
+        assert isinstance(app.screen, Slate)
+        assert app.screen.current_file_path == Path(config.get_snippets_path())
+
+
+async def test_config_command_opens_slate_editor(app_env):
+    from otakuchat.editor import Slate
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        app.handle_command("/config")
+        await _settle(pilot)
+        assert isinstance(app.screen, Slate)
+        assert app.screen.current_file_path == config.CONFIG_FILE
+
+
+async def test_closing_memory_editor_appends_a_ui_note(app_env):
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        app.handle_command("/memory")
+        await _settle(pilot)
+        await pilot.press("escape")
+        await _settle(pilot)
+        assert "closed memory editor" in app.conversation_history
+
+
+async def test_closing_config_editor_reloads_model_and_api_url(app_env):
+    """Regression guard: the old subprocess+suspend /config flow reloaded
+    self.model/self.api_url after the external editor closed — the
+    in-app Slate replacement must keep doing that so a hand-edited
+    config.ini actually takes effect without restarting the app."""
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        app.handle_command("/config")
+        await _settle(pilot)
+
+        parser = config._get_config()
+        parser["LLM"]["model"] = "a-different-model:latest"
+        config._save_config(parser)
+
+        await pilot.press("escape")
+        await _settle(pilot)
+        assert app.model == "a-different-model:latest"
+        assert "closed config editor" in app.conversation_history
+
+
+async def test_editing_and_saving_memory_file_persists_to_disk(app_env):
+    from otakuchat.editor import SlateTextArea
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        app.handle_command("/memory")
+        await _settle(pilot)
+        editor = app.screen.query_one("#editor", SlateTextArea)
+        editor.focus()
+        editor.text = "## Curated Memory\n\n- a hand-edited fact\n"
+        await pilot.press("ctrl+s")
+        await _settle(pilot)
+        assert Path(config.get_memory_path()).read_text() == "## Curated Memory\n\n- a hand-edited fact\n"

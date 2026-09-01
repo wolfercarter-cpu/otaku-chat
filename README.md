@@ -43,10 +43,10 @@ uv run otakuchat
 - `/help`          — show all commands with descriptions
 - `/menu`          — pick a command from a list instead of typing one
 - `/model [name]`  — list/switch the active Ollama model
-- `/memory`        — open the curated memory file in your editor
-- `/facts`         — open the curated topic→URL bookmark file (from web search grounding) in your editor
-- `/snippets`      — open the curated code-snippet library in your editor
-- `/config`        — open config.ini (model, api url, boost mode) in your editor
+- `/memory`        — open the curated memory file in the built-in Slate editor
+- `/facts`         — open the curated topic→URL bookmark file (from web search grounding) in the built-in Slate editor
+- `/snippets`      — open the curated code-snippet library in the built-in Slate editor
+- `/config`        — open config.ini (model, api url, boost mode) in the built-in Slate editor
 - `/new`           — start a fresh session
 - `/sessions`      — browse and resume past sessions
 - `/rename [name]` — rename the current session; no arg opens a text prompt pre-filled with the current title
@@ -65,6 +65,17 @@ a normal editor), persisted across sessions in sqlite.
 
 The header shows the active model plus its live capability badges
 (🧠 thinking / 🛠️ tools / 👁️ vision), read from Ollama's `/api/show`.
+
+`/memory`, `/facts`, `/snippets`, and `/config` all open the same in-app
+Slate editor (`otakuchat/editor.py`, `otakuchat/autocomplete.py`) —
+ported from Otakumafia's gmag file-manager project — instead of shelling
+out to `$EDITOR` and suspending the TUI. Syntax-highlighted (language
+auto-detected from the file's extension), auto-closing brackets/quotes,
+a "leap" search box (Ctrl+L, Tab completes a word straight from the open
+document, Enter jumps to it), and a fuzzy word-completion dropdown fed by
+every unique word already in the document. Ctrl+S saves, Esc closes; for
+`/config` specifically, closing it also reloads the live model/API URL
+without restarting the app, same as the old subprocess flow did.
 
 ## Self-curation
 
@@ -165,6 +176,12 @@ that feeds facts, all built on one shared foundation:
 
 **Everything else:**
 
+- `otakuchat/editor.py` + `otakuchat/autocomplete.py` — Slate, the in-app
+  editor for `/memory`, `/facts`, `/snippets`, `/config` (ported from
+  Otakumafia's gmag project). Syntax highlighting, auto-closing
+  brackets/quotes, a leap-search input, and a document-word-completion
+  dropdown, all inside the same Textual process — replaces shelling out
+  to `$EDITOR` + `App.suspend()`.
 - `otakuchat/ollama_client.py` — streaming chat, model discovery, and
   `/api/show` capability detection (thinking / tools / vision) against the
   local Ollama HTTP API only — no other providers, by design

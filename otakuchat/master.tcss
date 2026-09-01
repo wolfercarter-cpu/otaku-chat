@@ -95,3 +95,41 @@ ModalListPicker #picker-header, #iptr-l1, #confirm-l1 {
     color: $text-muted;
 }
 
+Slate {
+    layout: vertical;
+    background: $surface;
+}
+
+#editor-cheat-sheet {
+    dock: top;
+    width: 100%;
+    height: 1;
+    background: $panel;
+    color: #06b6d4;
+    content-align: center middle;
+}
+
+#leap-box {
+    width: 100%;
+    border: none;
+    border-bottom: solid #8b5cf6;
+    background: $panel;
+    padding: 0 1;
+}
+
+#leap-box > .input--placeholder {
+    color: #06b6d4;
+    text-style: italic;
+}
+
+#leap-box:focus {
+    border-bottom: solid #a855f7;
+}
+
+#editor {
+    width: 100%;
+    height: 1fr;
+    border: none;
+    background: $surface;
+}
+

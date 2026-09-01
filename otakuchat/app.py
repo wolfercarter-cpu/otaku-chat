@@ -7,8 +7,6 @@ can take are: answer, and (indirectly, via app-side hidden calls) contribute
 candidates to its own curated stores. Everything else — sessions, boosting,
 self-tuning, search grounding — is orchestrated by the app around it.
 """
-import shlex
-import subprocess
 from typing import Callable
 
 from textual import work
@@ -16,6 +14,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Label, Markdown
 
 from . import config, context, db, extract, facts, memory, patterns, reasoning, search, snippets
+from .editor import Slate
 from .inputer import TextPrompt
 from .ollama_client import OllamaError, get_capabilities, is_reachable, list_models
 from .options import MENU_ITEMS
@@ -350,31 +349,19 @@ class OtakuChat(App):
             return
 
         if lower == "/memory":
-            with self.suspend():
-                subprocess.run(shlex.split(config.get_editor()) + [config.get_memory_path()])
-            self.append_to_ui("\n\n*System: closed memory editor.*")
+            self.push_screen(Slate(config.get_memory_path()), self.handle_editor_close("memory"))
             return
 
         if lower == "/facts":
-            with self.suspend():
-                subprocess.run(shlex.split(config.get_editor()) + [config.get_facts_path()])
-            self.append_to_ui("\n\n*System: closed facts editor.*")
+            self.push_screen(Slate(config.get_facts_path()), self.handle_editor_close("facts"))
             return
 
         if lower == "/snippets":
-            with self.suspend():
-                subprocess.run(shlex.split(config.get_editor()) + [config.get_snippets_path()])
-            self.append_to_ui("\n\n*System: closed snippets editor.*")
+            self.push_screen(Slate(config.get_snippets_path()), self.handle_editor_close("snippets"))
             return
 
         if lower == "/config":
-            with self.suspend():
-                subprocess.run(shlex.split(config.get_editor()) + [str(config.CONFIG_FILE)])
-            self.model = config.get_model()
-            self.api_url = config.get_api_url()
-            self.append_to_ui(
-                "\n\n*System: closed config editor. Model/API/boost settings reloaded.*"
-            )
+            self.push_screen(Slate(str(config.CONFIG_FILE)), self.handle_config_editor_close)
             return
 
         if lower == "/think":
@@ -435,6 +422,21 @@ class OtakuChat(App):
     def handle_long_prompt(self, long_text: str | None) -> None:
         if long_text:
             self.process_chat_message(long_text)
+
+    def handle_editor_close(self, store_name: str) -> Callable[[None], None]:
+        """Build the push_screen callback for a /memory, /facts, or
+        /snippets Slate close — just appends a matching UI note (config
+        needs its own callback below since it also reloads live state)."""
+        def _on_close(_: None) -> None:
+            self.append_to_ui(f"\n\n*System: closed {store_name} editor.*")
+        return _on_close
+
+    def handle_config_editor_close(self, _: None) -> None:
+        self.model = config.get_model()
+        self.api_url = config.get_api_url()
+        self.append_to_ui(
+            "\n\n*System: closed config editor. Model/API/boost settings reloaded.*"
+        )
 
     def handle_menu_pick(self, command: str | None) -> None:
         if command:
