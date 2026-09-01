@@ -3,4 +3,5 @@ __pycache__/
 .venv/
 *.db
 ispiration/
+inspiration/
 .pytest_cache/

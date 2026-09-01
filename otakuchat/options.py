@@ -8,6 +8,8 @@ MENU_ITEMS = [
     ("memory", "/memory"),
     ("facts", "/facts"),
     ("snippets", "/snippets"),
+    ("vault", "/vault"),
+    ("import", "/import"),
     ("config", "/config"),
     ("new", "/new"),
     ("sessions", "/sessions"),

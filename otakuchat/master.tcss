@@ -133,3 +133,54 @@ Slate {
     background: $surface;
 }
 
+VaultManager {
+    layout: vertical;
+    background: $surface;
+}
+
+#vault-header {
+    text-style: bold;
+    padding: 1 2;
+    color: #a855f7;
+}
+
+#vault-search {
+    margin: 0 1 1 1;
+    border: tall #06b6d4;
+}
+
+#vault-list {
+    height: 1fr;
+    border: solid #8b5cf6;
+    margin: 0 1 1 1;
+}
+
+#vault-status {
+    padding: 0 2;
+    color: $text-muted;
+}
+
+#vault-actions {
+    height: auto;
+    padding: 1;
+    align: center middle;
+}
+
+#vault-actions Button {
+    margin: 0 1;
+}
+
+#vault-import-c1 {
+    width: 70%;
+    height: auto;
+    border: solid #8b5cf6;
+    padding: 1 2;
+    background: $surface;
+}
+
+#vault-import-l1 {
+    text-style: bold;
+    color: #a855f7;
+    padding-bottom: 1;
+}
+

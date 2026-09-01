@@ -106,6 +106,20 @@ CREATE TABLE IF NOT EXISTS url_extract_cache (
     content TEXT NOT NULL,
     fetched_at REAL NOT NULL
 );
+
+-- The vault: chunked full-text index of everything under vault/ and
+-- seed/ (see otakuchat/vault.py), one row per indexed file. root
+-- distinguishes the wipeable dump ("vault") from the survives-wipe
+-- whitelist ("seed") — Wipe deletes rows where root='vault' via
+-- delete_vault_chunks_for_path, never touches root='seed' rows.
+CREATE TABLE IF NOT EXISTS vault_chunks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    root TEXT NOT NULL,
+    relpath TEXT NOT NULL,
+    content TEXT NOT NULL,
+    indexed_at REAL NOT NULL,
+    UNIQUE(root, relpath)
+);
 """
 
 
@@ -585,3 +599,55 @@ def prune_stale_extract_cache(ttl_seconds: int) -> None:
         conn.execute(
             "DELETE FROM url_extract_cache WHERE fetched_at < ?", (time.time() - ttl_seconds,)
         )
+
+
+# --- Vault chunks (otakuchat/vault.py) -------------------------------------
+
+def add_vault_chunk(root: str, relpath: str, content: str) -> None:
+    """Insert or replace the indexed content for (root, relpath) — a
+    re-import/re-seed of the same path overwrites its prior chunk rather
+    than accumulating duplicates."""
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO vault_chunks (root, relpath, content, indexed_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(root, relpath) DO UPDATE SET content = excluded.content, "
+            "indexed_at = excluded.indexed_at",
+            (root, relpath, content, time.time()),
+        )
+
+
+def delete_vault_chunks_for_path(root: str, relpath: str) -> None:
+    with db() as conn:
+        conn.execute(
+            "DELETE FROM vault_chunks WHERE root = ? AND relpath = ?", (root, relpath)
+        )
+
+
+def clear_vault_chunks() -> None:
+    with db() as conn:
+        conn.execute("DELETE FROM vault_chunks")
+
+
+def count_vault_chunks() -> int:
+    with db() as conn:
+        row = conn.execute("SELECT COUNT(*) AS n FROM vault_chunks").fetchone()
+    return row["n"] if row else 0
+
+
+def list_vault_chunks() -> list[sqlite3.Row]:
+    with db() as conn:
+        return conn.execute(
+            "SELECT * FROM vault_chunks ORDER BY root ASC, relpath ASC"
+        ).fetchall()
+
+
+def relevant_vault_chunks(query: str, limit: int = 3) -> list[sqlite3.Row]:
+    """Strictly relevance-gated (see _rank_by_relevance's
+    fallback_to_recent=False) — an unrelated query gets nothing back
+    rather than an arbitrary chunk of imported content, same reasoning
+    as relevant_topic_links/relevant_snippets."""
+    chunks = list_vault_chunks()
+    return _rank_by_relevance(
+        query, chunks, lambda r: f"{r['relpath']} {r['content']}", limit,
+        fallback_to_recent=False,
+    )

@@ -13,12 +13,13 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.widgets import Label, Markdown
 
-from . import config, context, db, extract, facts, memory, patterns, reasoning, search, snippets
+from . import config, context, db, extract, facts, memory, patterns, reasoning, search, snippets, vault
 from .editor import Slate
 from .inputer import TextPrompt
 from .ollama_client import OllamaError, get_capabilities, is_reachable, list_models
 from .options import MENU_ITEMS
 from .pickers import ConfirmDialog, FileBrowser, ListPicker, ModalListPicker, SessionPicker
+from .vault_ui import VaultImportPrompt, VaultManager
 from .widgets import ChatInput, PromptEditor
 
 COMMANDS = [
@@ -28,6 +29,8 @@ COMMANDS = [
     ("/memory", "Open the curated memory file (self-learned facts) in your editor."),
     ("/facts", "Open the curated topic->URL bookmark file (from web search grounding) in your editor."),
     ("/snippets", "Open the curated code-snippet library in your editor."),
+    ("/vault", "Browse, remove, seed, or wipe imported vault content (fuzzy-searchable)."),
+    ("/import [url]", "Import a git repo (.git), .zip, or single file into the vault; no arg opens a URL prompt."),
     ("/config", "Open config.ini (model, api url, boost mode) in your editor."),
     ("/new", "Start a fresh session, clearing the visible chat."),
     ("/sessions", "Browse and resume a past session, or press 'd' on one to delete it permanently."),
@@ -164,6 +167,9 @@ class OtakuChat(App):
         snippets_block = snippets.render_snippets_block(last_user)
         if snippets_block:
             messages.append({"role": "system", "content": snippets_block})
+        vault_block = vault.render_vault_block(last_user)
+        if vault_block:
+            messages.append({"role": "system", "content": vault_block})
         if self.active_pattern:
             pattern_text = patterns.get_pattern(self.active_pattern)
             if pattern_text:
@@ -360,6 +366,18 @@ class OtakuChat(App):
             self.push_screen(Slate(config.get_snippets_path()), self.handle_editor_close("snippets"))
             return
 
+        if lower == "/vault":
+            self.push_screen(VaultManager())
+            return
+
+        if lower.startswith("/import"):
+            arg = cmd[len("/import"):].strip()
+            if arg:
+                self.handle_import_url(arg)
+            else:
+                self.push_screen(VaultImportPrompt(), self.handle_import_url)
+            return
+
         if lower == "/config":
             self.push_screen(Slate(str(config.CONFIG_FILE)), self.handle_config_editor_close)
             return
@@ -437,6 +455,21 @@ class OtakuChat(App):
         self.append_to_ui(
             "\n\n*System: closed config editor. Model/API/boost settings reloaded.*"
         )
+
+    def handle_import_url(self, url: str | None) -> None:
+        if not url:
+            return
+        self.append_to_ui(f"\n\n*System: importing '{url}' into the vault...*")
+        self.run_vault_import_bg(url)
+
+    @work(thread=True)
+    def run_vault_import_bg(self, url: str) -> None:
+        try:
+            message = vault.import_url(url)
+        except vault.ImportError_ as e:
+            self.call_from_thread(self.append_to_ui, f"\n\n*Import failed: {e}*")
+            return
+        self.call_from_thread(self.append_to_ui, f"\n\n*System: {message}*")
 
     def handle_menu_pick(self, command: str | None) -> None:
         if command:

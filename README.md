@@ -46,6 +46,8 @@ uv run otakuchat
 - `/memory`        — open the curated memory file in the built-in Slate editor
 - `/facts`         — open the curated topic→URL bookmark file (from web search grounding) in the built-in Slate editor
 - `/snippets`      — open the curated code-snippet library in the built-in Slate editor
+- `/vault`         — browse, remove, seed, or wipe imported vault content (fuzzy-searchable list)
+- `/import [url]`  — import a git repo (.git), .zip, or single file into the vault; no arg opens a URL prompt
 - `/config`        — open config.ini (model, api url, boost mode) in the built-in Slate editor
 - `/new`           — start a fresh session
 - `/sessions`      — browse and resume past sessions
@@ -197,6 +199,26 @@ that feeds facts, all built on one shared foundation:
 - `otakuchat/snippets.py` — self-curating code-snippet library, same
   hidden-side-call pattern as `memory.py`, strictly relevance-gated
   retrieval
+- `otakuchat/vault.py` — a RAG-style import directory ported from
+  Otakumafia's hutuio project's smart git/zip/file downloader
+  (`inspiration/hutuio/importer.py`), extended with a chunked-retrieval
+  layer on top so anything dropped into the vault auto-grounds relevant
+  turns the same way memory/facts/snippets do. Two directories:
+  `vault/` (the dump — text/code/markdown you import via `/import` or
+  drop in by hand) and `seed/` (a whitelist — anything copied there via
+  "Add to Seed" survives `/vault`'s Wipe button, which otherwise clears
+  `vault/` completely). Text-ish extensions get chunked, redacted
+  (`redact_secrets`), and indexed for retrieval; binaries are kept on
+  disk (so a cloned repo's assets still exist) but skipped from
+  retrieval since there's nothing useful to embed. `/import` accepts a
+  `.git` URL (shells out to `git clone --depth 1`), a `.zip` URL
+  (extracted in-memory, zip-slip guarded), or any other URL (saved as a
+  single file) — same three-way dispatch as hutuio's importer.
+- `otakuchat/vault_ui.py` — `/vault`'s manager screen: the same
+  search-as-you-type fuzzy list pattern as `pickers.py`, plus
+  Remove/Add to Seed/Wipe Vault/Reindex/Import URL buttons and `r`/`w`
+  key shortcuts. `VaultImportPrompt` is the small modal `/import` (no
+  arg) pops for a URL.
 - `otakuchat/search.py` — optional Brave Web Search client, wired into
   `OtakuChat.maybe_web_search` (`app.py`); inert unless `config.ini`'s
   `[SEARCH] brave_api_key` is set

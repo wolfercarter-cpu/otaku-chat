@@ -12,6 +12,8 @@ DEFAULT_SOUL_FILE = CONFIG_DIR / "SOUL.md"
 DEFAULT_MEMORY_FILE = CONFIG_DIR / "MEMORY.md"
 DEFAULT_FACTS_FILE = CONFIG_DIR / "FACTS.md"
 DEFAULT_SNIPPETS_FILE = CONFIG_DIR / "SNIPPETS.md"
+DEFAULT_VAULT_DIR = DATA_DIR / "vault"
+DEFAULT_SEED_DIR = DATA_DIR / "seed"
 
 DEFAULTS = {
     "GENERAL": {
@@ -92,6 +94,29 @@ DEFAULTS = {
         # Never touches playwright at all when false/uninstalled.
         "use_browser_fallback": "false",
     },
+    "VAULT": {
+        # vault dirs: "vault" (wipeable dump) and "seed" (survives-wipe
+        # whitelist) — see otakuchat/vault.py. Paths default under
+        # DATA_DIR (~/.local/share/otakuchat/vault, .../seed).
+        "vault_path": str(DEFAULT_VAULT_DIR),
+        "seed_path": str(DEFAULT_SEED_DIR),
+        # only files with these extensions are indexed for retrieval
+        # (binaries land on disk fine via /import, just never chunked/
+        # searched — we can't usefully embed them with token-overlap
+        # ranking); comma-separated, matched case-insensitively.
+        "indexed_extensions": ".md,.txt,.py,.js,.ts,.json,.yaml,.yml,.toml,.ini,.sh,.go,.rs,.java,.c,.cpp,.h,.html,.css,.rst,.csv",
+        # a single indexed file larger than this many chars is truncated
+        # before being stored for retrieval (full file still lands on
+        # disk untouched; this only bounds what a turn can inject)
+        "max_file_index_chars": "20000",
+        # how many vault chunks can surface into a single turn
+        "results_per_turn": "3",
+        # per-chunk text is truncated to this many chars before entering
+        # the system prompt
+        "max_chunk_chars": "1500",
+        # git clone / zip download / single-file download timeout
+        "import_timeout_s": "60",
+    },
 }
 
 
@@ -101,6 +126,13 @@ def _get_config() -> ConfigParser:
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    # Unlike SOUL/MEMORY/FACTS/SNIPPETS above, vault/seed are plain
+    # directories a user drops content into directly (via /import or by
+    # hand) — always ensured to exist, not just on a fresh install, so
+    # enabling the feature on an existing ~/.local/share/otakuchat still
+    # gets working directories immediately.
+    DEFAULT_VAULT_DIR.mkdir(parents=True, exist_ok=True)
+    DEFAULT_SEED_DIR.mkdir(parents=True, exist_ok=True)
 
     if CONFIG_FILE.exists():
         parser.read(CONFIG_FILE)
@@ -356,3 +388,33 @@ def get_extract_cache_ttl_hours() -> int:
 
 def get_extract_use_browser_fallback() -> bool:
     return _get("EXTRACT", "use_browser_fallback", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+# --- VAULT (dump/seed RAG-style import directories) ---
+def get_vault_path() -> str:
+    return _get("VAULT", "vault_path", str(DEFAULT_VAULT_DIR))
+
+
+def get_seed_path() -> str:
+    return _get("VAULT", "seed_path", str(DEFAULT_SEED_DIR))
+
+
+def get_vault_indexed_extensions() -> set[str]:
+    raw = _get("VAULT", "indexed_extensions", DEFAULTS["VAULT"]["indexed_extensions"])
+    return {ext.strip().lower() for ext in raw.split(",") if ext.strip()}
+
+
+def get_vault_max_file_index_chars() -> int:
+    return _get_int("VAULT", "max_file_index_chars", 20000)
+
+
+def get_vault_results_per_turn() -> int:
+    return _get_int("VAULT", "results_per_turn", 3)
+
+
+def get_vault_max_chunk_chars() -> int:
+    return _get_int("VAULT", "max_chunk_chars", 1500)
+
+
+def get_vault_import_timeout() -> int:
+    return _get_int("VAULT", "import_timeout_s", 60)

@@ -32,6 +32,8 @@ def isolated_env(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DEFAULT_MEMORY_FILE", config_dir / "MEMORY.md")
     monkeypatch.setattr(config, "DEFAULT_FACTS_FILE", config_dir / "FACTS.md")
     monkeypatch.setattr(config, "DEFAULT_SNIPPETS_FILE", config_dir / "SNIPPETS.md")
+    monkeypatch.setattr(config, "DEFAULT_VAULT_DIR", data_dir / "vault")
+    monkeypatch.setattr(config, "DEFAULT_SEED_DIR", data_dir / "seed")
 
     # DEFAULTS is a plain dict built once at import time from the ORIGINAL
     # path constants above — patching the constants alone doesn't change
@@ -42,6 +44,8 @@ def isolated_env(tmp_path, monkeypatch):
     monkeypatch.setitem(config.DEFAULTS["PATHS"], "memory", str(config_dir / "MEMORY.md"))
     monkeypatch.setitem(config.DEFAULTS["PATHS"], "facts", str(config_dir / "FACTS.md"))
     monkeypatch.setitem(config.DEFAULTS["PATHS"], "snippets", str(config_dir / "SNIPPETS.md"))
+    monkeypatch.setitem(config.DEFAULTS["VAULT"], "vault_path", str(data_dir / "vault"))
+    monkeypatch.setitem(config.DEFAULTS["VAULT"], "seed_path", str(data_dir / "seed"))
 
     db.init_db()
     yield config_dir, data_dir

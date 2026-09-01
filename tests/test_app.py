@@ -429,3 +429,61 @@ async def test_editing_and_saving_memory_file_persists_to_disk(app_env):
         await pilot.press("ctrl+s")
         await _settle(pilot)
         assert Path(config.get_memory_path()).read_text() == "## Curated Memory\n\n- a hand-edited fact\n"
+
+
+# --- /vault and /import ------------------------------------------------
+
+async def test_vault_command_opens_vault_manager(app_env):
+    from otakuchat.vault_ui import VaultManager
+
+    app = OtakuChat()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _settle(pilot)
+        app.handle_command("/vault")
+        await _settle(pilot)
+        assert isinstance(app.screen, VaultManager)
+
+
+async def test_import_with_no_arg_opens_prompt(app_env):
+    from otakuchat.vault_ui import VaultImportPrompt
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        app.handle_command("/import")
+        await _settle(pilot)
+        assert isinstance(app.screen, VaultImportPrompt)
+
+
+async def test_import_with_url_arg_imports_directly_without_a_prompt(app_env):
+    from otakuchat import vault
+
+    fake_resp = mock.MagicMock()
+    fake_resp.read.return_value = b"# direct import"
+    fake_resp.__enter__.return_value = fake_resp
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        with mock.patch("urllib.request.urlopen", return_value=fake_resp):
+            app.handle_command("/import https://example.com/direct.md")
+            await _settle(pilot, n=6)
+        assert (vault.vault_dir() / "direct.md").exists()
+        assert "importing" in app.conversation_history
+
+
+async def test_vault_content_grounds_a_turn_via_build_messages(app_env):
+    from otakuchat import vault
+
+    p = vault.vault_dir() / "project_notes.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("The deployment pipeline uses GitHub Actions and pushes to Fly.io.")
+    vault.index_file("vault", "project_notes.md", p)
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        db.add_message(app.session_id, "user", "how does our deployment pipeline work")
+        messages = app.build_messages()
+    joined = " ".join(m["content"] for m in messages)
+    assert "GitHub Actions" in joined
