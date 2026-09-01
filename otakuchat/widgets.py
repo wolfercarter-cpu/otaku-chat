@@ -4,7 +4,7 @@ from textual import events
 from textual.binding import Binding
 from textual.message import Message
 from textual.screen import Screen
-from textual.widgets import Input, Static, TextArea
+from textual.widgets import Collapsible, Input, Sparkline, Static, TextArea
 
 
 class HistoryRecallMixin:
@@ -235,3 +235,99 @@ class PromptEditor(Screen):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+class ChatLeapInput(Input):
+    """The input living inside the chat screen's leap Collapsible — jump
+    to the next occurrence of typed text within #chat-output's rendered
+    markdown blocks. Enter jumps + keeps focus in the box so repeated
+    Enter walks forward through every match (there's no dedicated
+    SlateTextArea-style document here — #chat-output is read-only
+    Markdown blocks, not an editable buffer — so \"jump\" here means
+    scroll #chat-scroll to bring the matching block into view, not move
+    a text cursor)."""
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        query = event.value.strip()
+        if not query:
+            return
+        self.post_message(ChatLeapInput.LeapRequested(self, query))
+
+    @dataclass
+    class LeapRequested(Message):
+        input: "ChatLeapInput"
+        query: str
+
+        @property
+        def control(self) -> "ChatLeapInput":
+            return self.input
+
+
+class ChatLeapBar(Collapsible):
+    """A borderless, collapsed-by-default search bar docked at the top of
+    the chat screen — ported from Otakumafia's Slate editor leap-search
+    (editor.py's LeapInput/#leap-box) into a Collapsible so it's tucked
+    out of the way until needed instead of always taking a header row.
+    Collapsed by default; press the title (or /leap, wired in app.py) to
+    expand and search the visible conversation.
+
+    The leap input is passed as a *child* to Collapsible's own __init__
+    rather than yielded from an overridden compose() — Collapsible's
+    compose() is what actually mounts its title widget and the Contents
+    wrapper that hides/shows children based on `collapsed`; overriding
+    it entirely (as an earlier version of this class did) skips both,
+    leaving the input permanently visible with no title, regardless of
+    collapsed state.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            ChatLeapInput(placeholder="Type to search, Enter to jump...", id="chat-leap-input"),
+            title="🔍 Leap search",
+            collapsed=True,
+            id="chat-leap",
+        )
+
+    def expand_and_focus(self) -> None:
+        self.collapsed = False
+        self.query_one("#chat-leap-input", ChatLeapInput).focus()
+
+
+class ActivitySparkline(Sparkline):
+    """A small live-updating sparkline above the chat input, pulsing on
+    two kinds of activity: the user typing (each keypress ticks it) and
+    the model actively streaming a reply (each token ticks it) — a purely
+    decorative "is something happening right now" heartbeat, ported from
+    the Sparkline summary-function example in Textual's own docs.
+
+    Backed by a fixed-length rolling buffer of recent "pulse" magnitudes
+    rather than any real metric — there's nothing meaningful to chart
+    here, just a heartbeat that's visibly alive vs. flat. A timer decays
+    the buffer continuously so it settles back to a flat line a couple
+    of seconds after activity stops, instead of staying spiked forever
+    on the last keypress.
+    """
+
+    WIDTH = 40
+    DECAY_PER_TICK = 0.85
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(data=[0.0] * self.WIDTH, summary_function=max, **kwargs)
+        self._buffer: list[float] = [0.0] * self.WIDTH
+        self._decay_timer = None
+
+    def on_mount(self) -> None:
+        self._decay_timer = self.set_interval(1 / 12, self._decay)
+
+    def pulse(self, magnitude: float = 1.0) -> None:
+        """Record one tick of activity — called on every keypress in the
+        chat input and on every streamed token from the model."""
+        self._buffer.pop(0)
+        self._buffer.append(magnitude)
+        self.data = list(self._buffer)
+
+    def _decay(self) -> None:
+        if not any(self._buffer):
+            return
+        self._buffer = [v * self.DECAY_PER_TICK if v > 0.02 else 0.0 for v in self._buffer]
+        self.data = list(self._buffer)

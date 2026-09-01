@@ -3,10 +3,24 @@ Screen {
     background: $surface;
 }
 
+#chat-leap {
+    background: transparent;
+    border: none;
+    padding: 0 1;
+}
+
+#chat-leap > Contents {
+    padding: 0 1 1 1;
+}
+
+#chat-leap-input {
+    border: tall #8b5cf6;
+}
+
 #chat-scroll {
     height: 1fr;
-    border: solid #8b5cf6;
-    margin: 1;
+    border: none;
+    margin: 0 1;
 }
 
 #chat-output {
@@ -20,10 +34,27 @@ Screen {
     color: #a855f7;
 }
 
+#bottom-bar {
+    height: auto;
+    margin: 0 1 1 1;
+}
+
+#activity-sparkline {
+    height: 1;
+    margin: 0 0 0 0;
+}
+
+#activity-sparkline > .sparkline--max-color {
+    color: #a855f7;
+}
+
+#activity-sparkline > .sparkline--min-color {
+    color: #06b6d4 30%;
+}
+
 #main-i1 {
-    dock: bottom;
-    margin: 1;
-    border: tall #06b6d4;
+    border: none;
+    border-top: tall darkviolet;
     width: 100%;
 }
 

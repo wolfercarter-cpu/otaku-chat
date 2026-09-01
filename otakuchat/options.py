@@ -21,5 +21,6 @@ MENU_ITEMS = [
     ("pattern", "/pattern"),
     ("pattern off", "/pattern off"),
     ("prompt", "/prompt"),
+    ("leap", "/leap"),
     ("quit", "/quit"),
 ]

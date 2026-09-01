@@ -17,8 +17,8 @@ from typing import Callable
 
 from textual import work
 from textual.app import App, ComposeResult
-from textual.containers import VerticalScroll
-from textual.widgets import Label, Markdown
+from textual.containers import Vertical, VerticalScroll
+from textual.widgets import Label, Markdown, TextArea
 
 from . import config, context, db, extract, faas, facts, memory, patterns, reasoning, search, snippets, vault
 from .editor import Slate
@@ -28,7 +28,7 @@ from .ollama_client import OllamaError, get_capabilities, is_reachable, list_mod
 from .options import MENU_ITEMS
 from .pickers import ConfirmDialog, FileBrowser, ListPicker, ModalListPicker, SessionPicker
 from .vault_ui import VaultImportPrompt, VaultManager
-from .widgets import ChatInput, PromptEditor
+from .widgets import ActivitySparkline, ChatInput, ChatLeapBar, ChatLeapInput, PromptEditor
 
 COMMANDS = [
     ("/help", "Show this list of commands."),
@@ -49,6 +49,7 @@ COMMANDS = [
     ("/think", "Cycle the reasoning boost mode: auto -> always -> off."),
     ("/pattern [name]", "Apply a curated prompt pattern (Fabric-style) to your next message, or clear with /pattern off."),
     ("/prompt", "Open a full-screen editor for composing a long/multi-line prompt."),
+    ("/leap", "Expand the leap search bar and jump to text in the visible conversation."),
     ("/quit", "Exit OtakuChat (alias: /exit)."),
 ]
 
@@ -92,9 +93,12 @@ class OtakuChat(App):
 
     def compose(self) -> ComposeResult:
         yield Label("OtakuChat", id="main-l1")
+        yield ChatLeapBar()
         with VerticalScroll(id="chat-scroll"):
             yield Markdown(self.conversation_history, id="chat-output")
-        yield ChatInput(id="main-i1")
+        with Vertical(id="bottom-bar"):
+            yield ActivitySparkline(id="activity-sparkline")
+            yield ChatInput(id="main-i1")
 
     def on_mount(self) -> None:
         self.refresh_header()
@@ -278,17 +282,57 @@ class OtakuChat(App):
         self._update_chat_output(
             self.conversation_history + self.active_thinking + self.active_stream
         )
+        self._pulse_sparkline(1.0)
 
     def thinking_to_ui(self, chunk: str) -> None:
         self.active_thinking += chunk
         self._update_chat_output(
             self.conversation_history + self.active_thinking + self.active_stream
         )
+        self._pulse_sparkline(0.6)
 
     def status_to_ui(self, note: str) -> None:
         self._update_chat_output(
             self.conversation_history + self.active_thinking + self.active_stream + f"\n\n*{note}*"
         )
+
+    def _pulse_sparkline(self, magnitude: float = 1.0) -> None:
+        """Tick the activity sparkline above the input — called on every
+        keypress in the chat input (on_text_area_changed below) and on
+        every streamed token/thinking-chunk from the model
+        (stream_to_ui/thinking_to_ui above), so the sparkline reads as a
+        live \"something is happening\" heartbeat from either side of the
+        conversation."""
+        try:
+            self.query_one("#activity-sparkline", ActivitySparkline).pulse(magnitude)
+        except Exception:  # noqa: BLE001 — purely decorative, never worth crashing a turn over
+            pass
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Pulse the sparkline on every keystroke in the main chat input.
+        Bubbles here from ChatInput's own TextArea.Changed (separate from
+        ChatInput.on_text_area_changed's own auto-resize handling — both
+        fire independently since they're defined on different classes in
+        the message's bubble path)."""
+        if event.text_area.id == "main-i1":
+            self._pulse_sparkline(1.0)
+
+    def on_chat_leap_input_leap_requested(self, event: ChatLeapInput.LeapRequested) -> None:
+        """Scroll #chat-scroll to the first #chat-output block containing
+        the searched text — the read-only-Markdown equivalent of Slate's
+        leap-to-text (there's no text cursor to move here, just a block
+        to bring into view)."""
+        query = event.query.lower()
+        markdown = self.query_one("#chat-output", Markdown)
+        for block in markdown.query("MarkdownBlock"):
+            try:
+                text = block.render().plain
+            except Exception:  # noqa: BLE001 — a block that can't render as plain text just isn't searchable
+                continue
+            if query in text.lower():
+                self.query_one("#chat-scroll", VerticalScroll).scroll_to_widget(block, animate=True)
+                return
+        self.notify(f"'{event.query}' not found in the visible conversation.", severity="warning")
 
     # -- input handling --------------------------------------------------
 
@@ -332,6 +376,10 @@ class OtakuChat(App):
 
         if lower == "/prompt":
             self.push_screen(PromptEditor(), self.handle_long_prompt)
+            return
+
+        if lower == "/leap":
+            self.query_one(ChatLeapBar).expand_and_focus()
             return
 
         if lower == "/new":
