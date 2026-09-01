@@ -4,7 +4,7 @@ Screen {
 }
 
 #chat-output {
-    height: 1fr;
+    height: auto;
     border: solid #8b5cf6;
     margin: 1;
     padding: 1;
