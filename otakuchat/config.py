@@ -74,6 +74,22 @@ DEFAULTS = {
         "max_code_chars": "4000",
         "results_per_turn": "2",
     },
+    "EXTRACT": {
+        # how many of the top search results actually get their page
+        # content fetched (rest fall back to title+snippet only)
+        "top_n": "2",
+        # per-result extracted text is truncated to this many chars before
+        # entering the system prompt
+        "max_chars": "3000",
+        "timeout_s": "10",
+        # cache a fetched page's extracted text for this long before a
+        # repeat request re-fetches it
+        "cache_ttl_hours": "24",
+        # opt-in: retry a JS-thin stdlib extraction through headless
+        # Chromium via playwright, if installed (uv sync --extra browser).
+        # Never touches playwright at all when false/uninstalled.
+        "use_browser_fallback": "false",
+    },
 }
 
 
@@ -308,3 +324,24 @@ def get_max_snippet_code_chars() -> int:
 
 def get_snippets_results_per_turn() -> int:
     return _get_int("SNIPPETS", "results_per_turn", 2)
+
+
+# --- EXTRACT (page-content extraction for search grounding) ---
+def get_extract_top_n() -> int:
+    return _get_int("EXTRACT", "top_n", 2)
+
+
+def get_extract_max_chars() -> int:
+    return _get_int("EXTRACT", "max_chars", 3000)
+
+
+def get_extract_timeout() -> int:
+    return _get_int("EXTRACT", "timeout_s", 10)
+
+
+def get_extract_cache_ttl_hours() -> int:
+    return _get_int("EXTRACT", "cache_ttl_hours", 24)
+
+
+def get_extract_use_browser_fallback() -> bool:
+    return _get("EXTRACT", "use_browser_fallback", "false").strip().lower() in ("1", "true", "yes", "on")

@@ -291,3 +291,42 @@ async def test_build_messages_survives_a_search_network_failure(app_env):
         ):
             messages = app.build_messages()
         assert len(messages) >= 1
+
+
+async def test_maybe_web_search_extracts_page_content_for_top_results(app_env):
+    """The 'supercharge' path: a successful Brave search should have its
+    top result's actual page content fetched and folded into the search
+    block, not just the title+snippet Brave itself returns."""
+    import json
+
+    parser = config._get_config()
+    parser["SEARCH"]["brave_api_key"] = "fake-key"
+    config._save_config(parser)
+
+    search_payload = {
+        "web": {
+            "results": [
+                {"title": "Real Page", "url": "https://example.com/a", "description": "a snippet"},
+            ]
+        }
+    }
+    search_resp = mock.MagicMock()
+    search_resp.read.return_value = json.dumps(search_payload).encode("utf-8")
+    search_resp.__enter__.return_value = search_resp
+
+    page_resp = mock.MagicMock()
+    page_resp.headers = {"Content-Type": "text/html"}
+    page_resp.read.return_value = b"<p>This is the actual full article body text.</p>"
+    page_resp.__enter__.return_value = page_resp
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        db.add_message(app.session_id, "user", "some query")
+        with mock.patch(
+            "urllib.request.urlopen", side_effect=[search_resp, page_resp]
+        ):
+            block = app.maybe_web_search("some query")
+    assert block is not None
+    assert "This is the actual full article body text." in block
+    assert "1 with full page content" in app._last_search_note

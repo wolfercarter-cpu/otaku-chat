@@ -97,6 +97,15 @@ CREATE TABLE IF NOT EXISTS snippets (
     created_at REAL NOT NULL,
     last_used REAL
 );
+
+-- Extracted-page-text cache for otakuchat/extract.py — a fetched URL's
+-- clean text is cached so a repeat question about the same page doesn't
+-- refetch/re-render it (see config.EXTRACT.cache_ttl_hours).
+CREATE TABLE IF NOT EXISTS url_extract_cache (
+    url TEXT PRIMARY KEY,
+    content TEXT NOT NULL,
+    fetched_at REAL NOT NULL
+);
 """
 
 
@@ -541,3 +550,38 @@ def prune_unused_snippets(keep: int) -> None:
         if len(ids) > keep:
             to_remove = ids[: len(ids) - keep]
             conn.executemany("DELETE FROM snippets WHERE id = ?", [(i,) for i in to_remove])
+
+
+# --- Extracted-page-text cache (otakuchat/extract.py) ----------------------
+
+def get_cached_extract(url: str, ttl_seconds: int) -> str | None:
+    """Return cached extracted text for `url` if present and younger than
+    `ttl_seconds`, else None (stale entries are left in place — the next
+    successful set_cached_extract overwrites them; no separate GC pass)."""
+    with db() as conn:
+        row = conn.execute(
+            "SELECT content, fetched_at FROM url_extract_cache WHERE url = ?", (url,)
+        ).fetchone()
+    if row is None:
+        return None
+    if time.time() - row["fetched_at"] > ttl_seconds:
+        return None
+    return row["content"]
+
+
+def set_cached_extract(url: str, content: str) -> None:
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO url_extract_cache (url, content, fetched_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(url) DO UPDATE SET content = excluded.content, fetched_at = excluded.fetched_at",
+            (url, content, time.time()),
+        )
+
+
+def prune_stale_extract_cache(ttl_seconds: int) -> None:
+    """Drop cache rows older than `ttl_seconds`. Best-effort housekeeping,
+    called opportunistically rather than on a schedule — see extract.py."""
+    with db() as conn:
+        conn.execute(
+            "DELETE FROM url_extract_cache WHERE fetched_at < ?", (time.time() - ttl_seconds,)
+        )

@@ -15,7 +15,7 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.widgets import Label, Markdown
 
-from . import config, context, db, facts, memory, patterns, reasoning, search, snippets
+from . import config, context, db, extract, facts, memory, patterns, reasoning, search, snippets
 from .inputer import TextPrompt
 from .ollama_client import OllamaError, get_capabilities, is_reachable, list_models
 from .options import MENU_ITEMS
@@ -186,9 +186,18 @@ class OtakuChat(App):
         message — no model-invoked tool call, no heuristic gating. No key
         configured means this never fires and never touches the network.
 
-        Best-effort: a failed search (network down, bad key, rate limit)
-        just means the turn proceeds without web grounding rather than
-        breaking the chat.
+        Beyond the raw search snippets, the top few results also get their
+        actual page content fetched and extracted (see extract.py) so the
+        model grounds on real page text instead of a two-line description —
+        this is the "supercharge" layer: search finds candidate URLs,
+        extract turns the best of them into real reading material. Page
+        extraction is itself best-effort per-URL; a failed fetch degrades
+        that one result back to snippet-only rather than dropping it or
+        failing the turn.
+
+        Best-effort throughout: a failed search (network down, bad key,
+        rate limit) just means the turn proceeds without web grounding
+        rather than breaking the chat.
         """
         self._last_search_note = None
         api_key = config.get_brave_api_key()
@@ -202,14 +211,22 @@ class OtakuChat(App):
             return None
         if not results:
             return None
-        self._last_search_note = f"included {len(results)} web result(s) for this turn"
         # Feed FACTS.md: file the URLs that actually had relevant info for
         # this query under it as the topic, so a recurring question can be
         # pointed at a known-good source later (see facts.render_facts_block,
         # which only ever surfaces these back when a future query actually
         # matches — never a wholesale replay of the bookmark store).
         facts.curate_from_search(query, results)
-        return search.format_results(query, results)
+
+        if on_status:
+            on_status("reading top results...")
+        enriched = extract.extract_top_results(results)
+        extracted_count = sum(1 for r in enriched if r.get("excerpt"))
+        self._last_search_note = (
+            f"included {len(results)} web result(s) for this turn "
+            f"({extracted_count} with full page content)"
+        )
+        return extract.format_extract_block(enriched)
 
     # -- UI helpers ----------------------------------------------------
 

@@ -104,15 +104,42 @@ way `/pattern` injects its instruction. A failed search (bad key, network
 down, rate limit) just means the turn proceeds ungrounded rather than
 breaking the chat.
 
+Search grounding is more than a snippet list: once Brave returns
+candidate URLs, `otakuchat/extract.py` fetches and reads the top few
+(`[EXTRACT] top_n` in `config.ini`, default 2) and folds their actual
+page text into the same hidden system message — the model reasons over
+real page content, not a two-line description. Extraction has two tiers:
+
+- **stdlib tier** (always on, zero new dependencies): `urllib` + a small
+  `html.parser.HTMLParser` subclass strips script/style/nav/footer/aside
+  and returns clean paragraph text. Handles the overwhelming majority of
+  docs/blogs/wikis/news pages.
+- **browser tier** (opt-in): for JS-rendered pages the stdlib tier can't
+  get real text out of, a headless-Chromium retry via Playwright kicks in
+  — but only when both `EXTRACT.use_browser_fallback = true` in
+  `config.ini` **and** the `browser` extra is installed
+  (`uv sync --extra browser` / `pip install otakuchat[browser]`).
+  `playwright` is never imported at all otherwise — same lazy-check
+  pattern aider's `Scraper.has_playwright()` uses, ported and trimmed to
+  the read-only path (no pandoc, no CLI entrypoint).
+
+Every extracted page is redacted (`redact.py`) before it can enter a
+system prompt or the cache, and cached in sqlite for
+`[EXTRACT] cache_ttl_hours` (default 24h) so a repeat question about the
+same page doesn't refetch it. A failed extraction for one URL degrades
+that result back to title+snippet rather than dropping it or breaking the
+turn — same best-effort posture as the search call itself.
+
 ## Design
 
 **Self-curation subsystem** — memory, facts, snippets, and the web search
 that feeds facts, all built on one shared foundation:
 
 - `otakuchat/db.py` — sqlite store: sessions, messages, curated memory,
-  topic→URL bookmarks, code snippets, perf stats, session compaction
-  cache, input history. `_rank_by_relevance` is the one Jaccard
-  token-overlap ranker behind all three relevance-gated stores.
+  topic→URL bookmarks, code snippets, extracted-page-text cache, perf
+  stats, session compaction cache, input history. `_rank_by_relevance` is
+  the one Jaccard token-overlap ranker behind all three relevance-gated
+  stores.
 - `otakuchat/curation.py` — the side-call/JSON-extraction plumbing shared
   by memory's and snippets' periodic self-curation passes (build a
   transcript, ask the model, pull a JSON array out of whatever it said),
@@ -131,6 +158,10 @@ that feeds facts, all built on one shared foundation:
 - `otakuchat/search.py` — optional Brave Web Search client, wired into
   `OtakuChat.maybe_web_search` (`app.py`); inert unless `config.ini`'s
   `[SEARCH] brave_api_key` is set
+- `otakuchat/extract.py` — turns search's title+snippet results into real
+  page text: stdlib `urllib` + `HTMLParser` tier always on, opt-in
+  headless-Chromium (Playwright) tier for JS-heavy pages, sqlite-cached,
+  redacted before it can enter a system prompt
 
 **Everything else:**
 

@@ -8,6 +8,15 @@ dependencies = [
     "textual>=0.60.0",
 ]
 
+[project.optional-dependencies]
+# Opt-in headless-browser fallback for JS-rendered pages that the stdlib
+# extraction tier (otakuchat/extract.py) can't get real text out of.
+# `EXTRACT.use_browser_fallback` stays off by default even with this
+# installed — the app never launches a browser unless both are true.
+browser = [
+    "playwright>=1.40.0",
+]
+
 [project.scripts]
 otakuchat = "otakuchat.app:main"
 
