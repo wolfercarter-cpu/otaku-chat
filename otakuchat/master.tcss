@@ -41,28 +41,28 @@ PromptEditor {
     color: #06b6d4;
 }
 
-SessionBrowser, ModelPicker {
+ListPicker {
     layout: vertical;
     background: $surface;
 }
 
-#sess-header, #model-header {
+ListPicker #picker-header {
     text-style: bold;
     padding: 1 2;
     color: #a855f7;
 }
 
-#session-list, #model-list {
+ListPicker #picker-list {
     height: 1fr;
     border: solid #8b5cf6;
     margin: 1;
 }
 
-OptionSelector, TextPrompt {
+ModalListPicker, TextPrompt {
     align: center middle;
 }
 
-#sel-c1, #iptr-c1 {
+#picker-c1, #iptr-c1 {
     width: 60%;
     height: auto;
     border: solid #8b5cf6;
@@ -70,7 +70,7 @@ OptionSelector, TextPrompt {
     background: $surface;
 }
 
-#menu-header, #iptr-l1 {
+ModalListPicker #picker-header, #iptr-l1 {
     text-style: bold;
     color: #a855f7;
     padding-bottom: 1;

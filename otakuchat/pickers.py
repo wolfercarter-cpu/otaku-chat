@@ -1,12 +1,11 @@
 from pathlib import Path
 from typing import Iterable
 
-from textual.screen import Screen
 from textual.app import ComposeResult
+from textual.containers import Container
+from textual.screen import ModalScreen, Screen
 from textual.widgets import DirectoryTree, Label, OptionList
 from textual.widgets.option_list import Option
-
-from . import db, patterns
 
 
 class FilteredDirectoryTree(DirectoryTree):
@@ -43,85 +42,64 @@ class FileBrowser(Screen):
         self.dismiss(None)
 
 
-class PatternPicker(Screen):
-    """Pick a curated Fabric-style prompt pattern to apply to the next message."""
+class _ListPickerBehavior:
+    """Shared behavior for ListPicker (full-screen) and ModalListPicker
+    (small centered popup) — same options/header/empty-message contract,
+    different presentation chrome. Same reasoning as widgets.py's
+    HistoryRecallMixin: the two pickers differ only in visual chrome
+    (Screen vs. ModalScreen isn't just CSS — ModalScreen also changes
+    binding precedence and dims what's behind it), so the actual picking
+    logic lives once here instead of twice.
+    """
 
-    BINDINGS = [("escape", "cancel", "Cancel")]
-
-    def compose(self):
-        yield Label("Patterns — Enter to apply, Esc to cancel", id="pattern-header")
-        yield OptionList(id="pattern-list")
-
-    def on_mount(self) -> None:
-        opt_list = self.query_one("#pattern-list", OptionList)
-        self.names = patterns.list_patterns()
-        if not self.names:
-            opt_list.add_option(Option("No patterns installed.", disabled=True))
-            return
-        for name in self.names:
-            desc = patterns.describe(name, max_chars=60)
-            opt_list.add_option(Option(f"{name} — {desc}", id=name))
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        self.dismiss(event.option.id)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
-class SessionBrowser(Screen):
-    """Pick a past session to resume."""
-
-    BINDINGS = [("escape", "cancel", "Cancel")]
-
-    def compose(self):
-        yield Label("Sessions — Enter to resume, Esc to cancel", id="sess-header")
-        yield OptionList(id="session-list")
-
-    def on_mount(self) -> None:
-        opt_list = self.query_one("#session-list", OptionList)
-        self.sessions = db.list_sessions()
-        if not self.sessions:
-            opt_list.add_option(Option("No sessions yet.", disabled=True))
-            return
-        for row in self.sessions:
-            label = f"#{row['id']}  {row['title']}  [{row['model']}]"
-            opt_list.add_option(Option(label, id=str(row["id"])))
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        if not self.sessions or event.option.id is None:
-            return
-        self.dismiss(int(event.option.id))
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
-class ModelPicker(Screen):
-    """Pick an installed Ollama model."""
-
-    BINDINGS = [("escape", "cancel", "Cancel")]
-
-    def __init__(self, models: list[str], current: str):
+    def __init__(
+        self,
+        header: str,
+        options: list[tuple[str, str]],
+        empty_message: str = "Nothing to pick.",
+    ) -> None:
         super().__init__()
-        self.models = models
-        self.current = current
-
-    def compose(self):
-        yield Label("Select a model — Esc to cancel", id="model-header")
-        yield OptionList(id="model-list")
+        self.header = header
+        self.options = options
+        self.empty_message = empty_message
 
     def on_mount(self) -> None:
-        opt_list = self.query_one("#model-list", OptionList)
-        if not self.models:
-            opt_list.add_option(Option("No models found. Is Ollama running?", disabled=True))
+        opt_list = self.query_one("#picker-list", OptionList)
+        if not self.options:
+            opt_list.add_option(Option(self.empty_message, disabled=True))
             return
-        for name in self.models:
-            marker = " (active)" if name == self.current else ""
-            opt_list.add_option(Option(f"{name}{marker}", id=name))
+        for label, value in self.options:
+            opt_list.add_option(Option(label, id=value))
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         self.dismiss(event.option.id)
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+class ListPicker(_ListPickerBehavior, Screen):
+    """Full-screen single-choice picker — /sessions, /pattern, /model.
+    Enter dismisses with the value of the highlighted option, Esc
+    dismisses with None."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def compose(self) -> ComposeResult:
+        yield Label(self.header, id="picker-header")
+        yield OptionList(id="picker-list")
+
+
+class ModalListPicker(_ListPickerBehavior, ModalScreen[str]):
+    """Small centered popup single-choice picker — /menu. Same behavior as
+    ListPicker, just rendered as a dimmed overlay with a bordered box
+    instead of taking over the whole screen — /menu's list is short enough
+    (currently 16 items) that a full-screen takeover isn't warranted the
+    way it is for potentially-long session/pattern/model lists."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def compose(self) -> ComposeResult:
+        with Container(id="picker-c1"):
+            yield Label(self.header, id="picker-header")
+            yield OptionList(id="picker-list")

@@ -18,8 +18,8 @@ from textual.widgets import Label, Markdown
 from . import config, context, db, facts, memory, patterns, reasoning, search, snippets
 from .inputer import TextPrompt
 from .ollama_client import OllamaError, get_capabilities, is_reachable, list_models
-from .options import OptionSelector
-from .pickers import FileBrowser, ModelPicker, PatternPicker, SessionBrowser
+from .options import MENU_ITEMS
+from .pickers import FileBrowser, ListPicker, ModalListPicker
 from .widgets import ChatInput, PromptEditor
 
 COMMANDS = [
@@ -269,7 +269,10 @@ class OtakuChat(App):
             return
 
         if lower == "/menu":
-            self.push_screen(OptionSelector(), self.handle_menu_pick)
+            self.push_screen(
+                ModalListPicker("Menu — Enter to run, Esc to cancel", MENU_ITEMS),
+                self.handle_menu_pick,
+            )
             return
 
         if lower == "/prompt":
@@ -286,7 +289,15 @@ class OtakuChat(App):
             return
 
         if lower == "/sessions":
-            self.push_screen(SessionBrowser(), self.handle_session_pick)
+            sessions = db.list_sessions()
+            options = [
+                (f"#{row['id']}  {row['title']}  [{row['model']}]", str(row["id"]))
+                for row in sessions
+            ]
+            self.push_screen(
+                ListPicker("Sessions — Enter to resume, Esc to cancel", options, "No sessions yet."),
+                self.handle_session_pick,
+            )
             return
 
         if lower.startswith("/rename"):
@@ -357,7 +368,15 @@ class OtakuChat(App):
         if lower.startswith("/pattern"):
             arg = cmd[len("/pattern"):].strip()
             if not arg:
-                self.push_screen(PatternPicker(), self.handle_pattern_pick)
+                names = patterns.list_patterns()
+                options = [
+                    (f"{name} — {patterns.describe(name, max_chars=60)}", name)
+                    for name in names
+                ]
+                self.push_screen(
+                    ListPicker("Patterns — Enter to apply, Esc to cancel", options, "No patterns installed."),
+                    self.handle_pattern_pick,
+                )
             elif arg.lower() == "off":
                 self.active_pattern = None
                 self.append_to_ui("\n\n*System: pattern cleared.*")
@@ -400,9 +419,10 @@ class OtakuChat(App):
         if command:
             self.handle_command(command)
 
-    def handle_session_pick(self, session_id: int | None) -> None:
-        if session_id is None:
+    def handle_session_pick(self, picked_id: str | None) -> None:
+        if picked_id is None:
             return
+        session_id = int(picked_id)
         row = db.get_session(session_id)
         if not row:
             return
@@ -432,7 +452,14 @@ class OtakuChat(App):
         self.call_from_thread(self._push_model_picker, models)
 
     def _push_model_picker(self, models: list[str]) -> None:
-        self.push_screen(ModelPicker(models, self.model), self.handle_model_pick)
+        options = [
+            (f"{name}{' (active)' if name == self.model else ''}", name)
+            for name in models
+        ]
+        self.push_screen(
+            ListPicker("Select a model — Esc to cancel", options, "No models found. Is Ollama running?"),
+            self.handle_model_pick,
+        )
 
     def handle_model_pick(self, model_name: str | None) -> None:
         if not model_name:
