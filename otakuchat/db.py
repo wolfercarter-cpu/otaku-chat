@@ -167,6 +167,15 @@ def rename_session(session_id: int, title: str) -> None:
         conn.execute("UPDATE sessions SET title = ? WHERE id = ?", (title, session_id))
 
 
+def delete_session(session_id: int) -> None:
+    """Permanently delete a session. messages and session_compaction both
+    declare ON DELETE CASCADE on session_id (see SCHEMA), and _connect()
+    turns PRAGMA foreign_keys ON, so this one DELETE takes everything
+    belonging to the session with it."""
+    with db() as conn:
+        conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+
+
 # --- Messages -----------------------------------------------------------
 
 def add_message(

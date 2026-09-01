@@ -72,7 +72,18 @@ class _ListPickerBehavior:
             opt_list.add_option(Option(label, id=value))
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        self.dismiss(event.option.id)
+        # Routes through a plain method rather than being overridden
+        # directly in subclasses (see SessionPicker): Textual's naming-
+        # convention message handlers aren't single-dispatch overrides —
+        # it walks the whole MRO and invokes every class that defines
+        # on_option_list_option_selected directly, not just the most
+        # derived one, so a subclass "override" of this exact method name
+        # would fire ALONGSIDE this one, not instead of it.
+        if event.option.id is not None:
+            self._handle_pick(event.option.id)
+
+    def _handle_pick(self, value: str) -> None:
+        self.dismiss(value)
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -103,3 +114,54 @@ class ModalListPicker(_ListPickerBehavior, ModalScreen[str]):
         with Container(id="picker-c1"):
             yield Label(self.header, id="picker-header")
             yield OptionList(id="picker-list")
+
+
+class SessionPicker(ListPicker):
+    """/sessions — a ListPicker with one addition: 'd' on the highlighted
+    row deletes that session instead of resuming it. Deleting a session is
+    the one genuinely irreversible action in this app (permanently drops
+    its messages too, via ON DELETE CASCADE — see db.delete_session), so
+    this dismisses ("resume"|"delete", id) instead of a bare id, letting
+    the caller route a delete through a confirm step before it happens
+    rather than acting on it directly from here."""
+
+    BINDINGS = ListPicker.BINDINGS + [("d", "delete_highlighted", "Delete")]
+
+    def _handle_pick(self, value: str) -> None:
+        self.dismiss(("resume", value))
+
+    def action_delete_highlighted(self) -> None:
+        opt_list = self.query_one("#picker-list", OptionList)
+        if opt_list.highlighted is None:
+            return
+        option = opt_list.get_option_at_index(opt_list.highlighted)
+        if option.id is not None:
+            self.dismiss(("delete", option.id))
+
+
+class ConfirmDialog(ModalScreen[bool]):
+    """Universal yes/no confirmation modal, for the rare action in this app
+    that's actually destructive/irreversible (currently: deleting a
+    session). y or Enter confirms, n or Esc declines — always dismisses a
+    bool, never None, since declining IS the answer here."""
+
+    BINDINGS = [
+        ("y", "confirm", "Yes"),
+        ("n", "cancel", "No"),
+        ("escape", "cancel", "No"),
+    ]
+
+    def __init__(self, prompt: str) -> None:
+        super().__init__()
+        self.prompt = prompt
+
+    def compose(self) -> ComposeResult:
+        with Container(id="confirm-c1"):
+            yield Label(self.prompt, id="confirm-l1")
+            yield Label("[y]es / [n]o / Esc", id="confirm-hint")
+
+    def action_confirm(self) -> None:
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)

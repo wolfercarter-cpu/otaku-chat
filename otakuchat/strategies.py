@@ -46,9 +46,10 @@ def get_strategy(name: str) -> dict | None:
 
 def pick_strategy(prompt: str) -> str:
     """Cheap heuristic mapping a prompt to the Fabric reasoning strategy
-    that best fits its shape. Falls back to 'self-refine' (closest to
-    otaku-chat's original hardcoded draft->critique->refine behavior)
-    when nothing more specific matches."""
+    that best fits its shape. Falls back to 'cot' (plain chain-of-thought)
+    when nothing more specific matches, and to whatever's loaded (or
+    'standard' if the strategies/ directory is empty/missing) if even
+    that isn't available."""
     available = _load_all()
     if not available:
         return "standard"

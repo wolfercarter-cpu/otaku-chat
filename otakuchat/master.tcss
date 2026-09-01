@@ -58,11 +58,11 @@ ListPicker #picker-list {
     margin: 1;
 }
 
-ModalListPicker, TextPrompt {
+ModalListPicker, TextPrompt, ConfirmDialog {
     align: center middle;
 }
 
-#picker-c1, #iptr-c1 {
+#picker-c1, #iptr-c1, #confirm-c1 {
     width: 60%;
     height: auto;
     border: solid #8b5cf6;
@@ -70,9 +70,13 @@ ModalListPicker, TextPrompt {
     background: $surface;
 }
 
-ModalListPicker #picker-header, #iptr-l1 {
+ModalListPicker #picker-header, #iptr-l1, #confirm-l1 {
     text-style: bold;
     color: #a855f7;
     padding-bottom: 1;
+}
+
+#confirm-hint {
+    color: $text-muted;
 }
 

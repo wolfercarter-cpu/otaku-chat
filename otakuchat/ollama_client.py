@@ -5,6 +5,7 @@ posture, but supports real token streaming via NDJSON line reads, plus
 native `think` streaming for models that support it (deepseek-r1, qwen3,
 gpt-oss, ...) — see get_capabilities().
 """
+import http.client
 import json
 import time
 import urllib.request
@@ -31,7 +32,7 @@ def list_models(api_url: str) -> list[dict]:
         with urllib.request.urlopen(url, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return data.get("models", [])
-    except (urllib.error.URLError, OSError) as e:
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
         raise OllamaError(f"Could not reach Ollama at {api_url}: {e}") from e
 
 
@@ -72,7 +73,7 @@ def get_capabilities(api_url: str, model: str) -> dict:
             "tools": "tools" in caps,
             "vision": "vision" in caps,
         }
-    except (urllib.error.URLError, OSError, json.JSONDecodeError):
+    except (urllib.error.URLError, OSError, http.client.HTTPException, json.JSONDecodeError):
         pass
 
     _CAPS_CACHE[model] = (now, result)
@@ -138,7 +139,7 @@ def chat_stream(
                     final_message["content"] = full_content
                     if full_thinking:
                         final_message["thinking"] = full_thinking
-    except (urllib.error.URLError, OSError) as e:
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
         raise OllamaError(f"Ollama request failed: {e}") from e
     except json.JSONDecodeError as e:
         raise OllamaError(f"Malformed response from Ollama: {e}") from e
@@ -172,5 +173,5 @@ def chat_once(
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             result = json.loads(resp.read().decode("utf-8"))
         return result.get("message", {}).get("content", "").strip()
-    except (urllib.error.URLError, OSError) as e:
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
         raise OllamaError(f"Ollama request failed: {e}") from e

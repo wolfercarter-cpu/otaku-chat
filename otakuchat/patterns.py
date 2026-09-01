@@ -24,11 +24,24 @@ def list_patterns() -> list[str]:
 
 
 def get_pattern(name: str) -> str | None:
-    """Return a pattern's system-prompt text, or None if it doesn't exist."""
-    path = PATTERNS_DIR / f"{name}.md"
-    if not path.is_file():
+    """Return a pattern's system-prompt text, or None if it doesn't exist.
+
+    `name` comes straight from a chat message (/pattern <name>), so this
+    guards against path traversal (e.g. "../../../etc/motd") reading
+    arbitrary .md files outside PATTERNS_DIR — bare filename only, and the
+    resolved path must still land inside PATTERNS_DIR even after that.
+    """
+    if not name or "/" in name or "\\" in name or name in (".", ".."):
         return None
-    return path.read_text(encoding="utf-8")
+    path = PATTERNS_DIR / f"{name}.md"
+    try:
+        resolved = path.resolve()
+        resolved.relative_to(PATTERNS_DIR.resolve())
+    except (ValueError, OSError):
+        return None
+    if not resolved.is_file():
+        return None
+    return resolved.read_text(encoding="utf-8")
 
 
 def describe(name: str, max_chars: int = 100) -> str:

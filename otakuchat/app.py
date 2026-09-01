@@ -19,7 +19,7 @@ from . import config, context, db, facts, memory, patterns, reasoning, search, s
 from .inputer import TextPrompt
 from .ollama_client import OllamaError, get_capabilities, is_reachable, list_models
 from .options import MENU_ITEMS
-from .pickers import FileBrowser, ListPicker, ModalListPicker
+from .pickers import ConfirmDialog, FileBrowser, ListPicker, ModalListPicker, SessionPicker
 from .widgets import ChatInput, PromptEditor
 
 COMMANDS = [
@@ -31,7 +31,7 @@ COMMANDS = [
     ("/snippets", "Open the curated code-snippet library in your editor."),
     ("/config", "Open config.ini (model, api url, boost mode) in your editor."),
     ("/new", "Start a fresh session, clearing the visible chat."),
-    ("/sessions", "Browse and resume a past session."),
+    ("/sessions", "Browse and resume a past session, or press 'd' on one to delete it permanently."),
     ("/rename [name]", "Rename the current session."),
     ("/export [file]", "Export the current session's transcript to a markdown file; no arg prompts for a filename (pre-filled with a default)."),
     ("/add [file]", "Attach a file's contents to the conversation context; no arg opens a file browser."),
@@ -295,7 +295,11 @@ class OtakuChat(App):
                 for row in sessions
             ]
             self.push_screen(
-                ListPicker("Sessions — Enter to resume, Esc to cancel", options, "No sessions yet."),
+                SessionPicker(
+                    "Sessions — Enter to resume, d to delete, Esc to cancel",
+                    options,
+                    "No sessions yet.",
+                ),
                 self.handle_session_pick,
             )
             return
@@ -419,10 +423,21 @@ class OtakuChat(App):
         if command:
             self.handle_command(command)
 
-    def handle_session_pick(self, picked_id: str | None) -> None:
-        if picked_id is None:
+    def handle_session_pick(self, result: tuple[str, str] | None) -> None:
+        if result is None:
             return
+        action, picked_id = result
         session_id = int(picked_id)
+
+        if action == "delete":
+            row = db.get_session(session_id)
+            title = row["title"] if row else f"#{session_id}"
+            self.push_screen(
+                ConfirmDialog(f"Delete session '{title}' permanently? This can't be undone."),
+                lambda confirmed: self.handle_session_delete_confirm(confirmed, session_id, title),
+            )
+            return
+
         row = db.get_session(session_id)
         if not row:
             return
@@ -441,6 +456,26 @@ class OtakuChat(App):
         self.conversation_history = "".join(rendered) if len(rendered) > 2 else "\n\n".join(rendered)
         self.query_one("#chat-output", Markdown).update(self.conversation_history)
         self.refresh_header()
+
+    def handle_session_delete_confirm(self, confirmed: bool, session_id: int, title: str) -> None:
+        if not confirmed:
+            return
+        was_active = session_id == self.session_id
+        db.delete_session(session_id)
+        if was_active:
+            # Deleted the session we were sitting in — same reset as /new,
+            # since there's nothing left to display or send turns into.
+            self.session_id = db.create_session("New chat", self.model)
+            self.turns_since_curation = 0
+            self.last_perf_id = None
+            self._system_prompt_cache = None
+            self.conversation_history = (
+                f"*{BANNER}*\n\n*System: deleted session '{title}' "
+                "(it was active, so a new one was started).*"
+            )
+            self.query_one("#chat-output", Markdown).update(self.conversation_history)
+        else:
+            self.append_to_ui(f"\n\n*System: deleted session '{title}'.*")
 
     @work(thread=True)
     def open_model_picker(self) -> None:

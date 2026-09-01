@@ -4,6 +4,7 @@ Entirely inert unless config.get_brave_api_key() is non-empty — no key, no
 network call, no behavior change. Uses urllib only (stdlib), matching the
 zero-dependency network posture of ollama_client.py.
 """
+import http.client
 import json
 import urllib.error
 import urllib.parse
@@ -35,7 +36,7 @@ def search_web(
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, OSError) as e:
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
         raise SearchError(f"Brave search request failed: {e}") from e
     except json.JSONDecodeError as e:
         raise SearchError(f"Malformed response from Brave search: {e}") from e

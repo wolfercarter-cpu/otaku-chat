@@ -152,6 +152,21 @@ def _get(section: str, key: str, fallback: str) -> str:
     return _get_config().get(section, key, fallback=fallback)
 
 
+def _get_int(section: str, key: str, default: int) -> int:
+    """Like _get, but for integer settings — falls back to `default` if the
+    value is missing, blank, or not a valid integer (e.g. the user
+    hand-editing config.ini via /config left a typo or blank value) rather
+    than raising and breaking every subsequent chat turn. build_messages()
+    calls several of these unconditionally before app.py's try/except
+    around a turn even starts, so a bad value here can't be allowed to
+    propagate as an exception."""
+    raw = _get(section, key, str(default))
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 # --- GENERAL ---
 def get_editor() -> str:
     return _get("GENERAL", "editor", os.environ.get("EDITOR", "nvim"))
@@ -201,7 +216,7 @@ def save_boost_mode(mode: str) -> None:
 
 
 def get_complexity_threshold() -> int:
-    return int(_get("BOOST", "complexity_threshold", "220"))
+    return _get_int("BOOST", "complexity_threshold", 220)
 
 
 def save_complexity_threshold(value: int) -> None:
@@ -248,20 +263,20 @@ def get_generation_options() -> dict:
 
 # --- MEMORY ---
 def get_curation_interval() -> int:
-    return int(_get("MEMORY", "curation_interval_turns", "8"))
+    return _get_int("MEMORY", "curation_interval_turns", 8)
 
 
 def get_max_memory_chars() -> int:
-    return int(_get("MEMORY", "max_memory_chars", "6000"))
+    return _get_int("MEMORY", "max_memory_chars", 6000)
 
 
 # --- CONTEXT (trajectory compression) ---
 def get_max_context_messages() -> int:
-    return int(_get("CONTEXT", "max_context_messages", "30"))
+    return _get_int("CONTEXT", "max_context_messages", 30)
 
 
 def get_protect_tail_messages() -> int:
-    return int(_get("CONTEXT", "protect_tail_messages", "12"))
+    return _get_int("CONTEXT", "protect_tail_messages", 12)
 
 
 # --- SEARCH (Brave Web Search grounding) ---
@@ -270,26 +285,26 @@ def get_brave_api_key() -> str:
 
 
 def get_search_max_results() -> int:
-    return int(_get("SEARCH", "max_results", "5"))
+    return _get_int("SEARCH", "max_results", 5)
 
 
 # --- FACTS (topic -> URL bookmarks, fed by web search) ---
 def get_max_links_stored() -> int:
-    return int(_get("FACTS", "max_links_stored", "200"))
+    return _get_int("FACTS", "max_links_stored", 200)
 
 
 def get_facts_results_per_turn() -> int:
-    return int(_get("FACTS", "results_per_turn", "2"))
+    return _get_int("FACTS", "results_per_turn", 2)
 
 
 # --- SNIPPETS (self-curating code-snippet library) ---
 def get_max_snippets_stored() -> int:
-    return int(_get("SNIPPETS", "max_snippets_stored", "100"))
+    return _get_int("SNIPPETS", "max_snippets_stored", 100)
 
 
 def get_max_snippet_code_chars() -> int:
-    return int(_get("SNIPPETS", "max_code_chars", "4000"))
+    return _get_int("SNIPPETS", "max_code_chars", 4000)
 
 
 def get_snippets_results_per_turn() -> int:
-    return int(_get("SNIPPETS", "results_per_turn", "2"))
+    return _get_int("SNIPPETS", "results_per_turn", 2)
