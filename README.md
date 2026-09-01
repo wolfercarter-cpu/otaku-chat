@@ -191,6 +191,31 @@ that feeds facts, all built on one shared foundation:
   byte-stable across turns so Ollama can reuse its KV cache instead of
   reprocessing the system+memory block on every single message.
 
+## Tests
+
+```bash
+uv run pytest
+```
+
+106 tests, all fully isolated from your real `~/.config/otakuchat` and
+`~/.local/share/otakuchat` (see `tests/conftest.py`'s `isolated_env`
+fixture, which redirects every on-disk path into a throwaway `tmp_path`
+before each test) — safe to run repeatedly without touching real
+sessions, config, or curated stores. No live Ollama server or network
+access required: `test_ollama_client.py`/`test_search.py` mock
+`urllib.request.urlopen` directly.
+
+Covers, module for module: the strict relevance-gating in `db.py`
+(facts/snippets never leak into an unrelated turn) and its stopword list;
+`patterns.get_pattern()`'s path-traversal guard; every numeric
+`config.get_*()` falling back to its documented default instead of
+raising on a hand-edited `config.ini`; `ollama_client.py`/`search.py`
+wrapping a mid-response disconnect into a clean error instead of leaking
+a raw exception; the `ChatInput`/`HistoryInput` typing and resize
+regressions; and full end-to-end flows through the real `OtakuChat` app
+via Textual's `run_test()` pilot harness (`/menu`, `/rename`, `/export`,
+`/sessions` including the delete-confirm flow, `/pattern`).
+
 ## Prior art
 
 Several design choices here were informed by studying `hermes-agent`
