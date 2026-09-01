@@ -16,7 +16,9 @@ when it actually matches what's being asked.
 import datetime
 
 from . import config, curation, db
+from .fileio import locked_atomic_write
 from .redact import redact_secrets
+from .threats import scan_for_threats
 
 CURATION_SYSTEM = (
     "You extract reusable code snippets worth saving from a conversation for "
@@ -48,7 +50,16 @@ def curate_from_turns(api_url: str, model: str, turns: list[dict]) -> list[str]:
         tags = str(item.get("tags", "")).strip()
         language = str(item.get("language", "")).strip()
         note = str(item.get("note", "")).strip()
-        code, _ = redact_secrets(code)  # never file a leaked secret away as a "useful" snippet
+        code, _ = redact_secrets(code)  # mask a leaked secret before the threat scan sees it
+        if scan_for_threats(f"{title} {tags} {note} {code}"):
+            # A snippet's code/note is rendered verbatim into a future
+            # system prompt — same reasoning as memory.py: don't let an
+            # injection payload (e.g. a code comment engineered to look
+            # like an instruction) get filed away as "reusable". Runs
+            # AFTER redaction so a real secret gets masked-and-kept
+            # rather than rejected outright (redact_secrets' masked form
+            # never matches the injection patterns below).
+            continue
         db.add_snippet(title, tags, language, code, note)
         added.append(title)
 
@@ -108,8 +119,7 @@ def _mirror_to_disk() -> None:
     if not all_snippets:
         lines.append("(Nothing here yet.)")
     try:
-        with open(config.get_snippets_path(), "w") as f:
-            f.write("\n".join(lines))
+        locked_atomic_write(config.get_snippets_path(), "\n".join(lines))
     except OSError:
         pass
 

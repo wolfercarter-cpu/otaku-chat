@@ -10,13 +10,22 @@ a bookmark saved for one topic never gets replayed into an unrelated
 turn — see db._rank_by_relevance's fallback_to_recent=False.
 """
 from . import config, db
+from .fileio import locked_atomic_write
+from .threats import scan_for_threats
 
 
 def curate_from_search(topic: str, results: list[dict]) -> list[str]:
     """Called right after a successful web search (see app.py
     OtakuChat.maybe_web_search). Files the top few result URLs under
     `topic` (the search query, as-is) and returns the URLs actually newly
-    added (skips exact (topic, url) dupes)."""
+    added (skips exact (topic, url) dupes).
+
+    A search result's description is the least trusted text in this app
+    — it's raw third-party web content that flows straight into a
+    permanent, always-replayed bookmark file. Scanned for injection
+    patterns before it's ever stored; a flagged result is skipped
+    entirely (not partially stored with the description blanked) since a
+    bookmark with no description is a URL with no useful context."""
     topic = topic.strip()
     if not topic or not results:
         return []
@@ -25,9 +34,12 @@ def curate_from_search(topic: str, results: list[dict]) -> list[str]:
     added = []
     for r in results[:save_top_n]:
         url = (r.get("url") or "").strip()
+        description = (r.get("description") or "").strip()
         if not url:
             continue
-        if db.add_topic_link(topic, url, r.get("description", "")):
+        if scan_for_threats(f"{topic} {description}"):
+            continue
+        if db.add_topic_link(topic, url, description):
             added.append(url)
 
     if added:
@@ -69,7 +81,6 @@ def _mirror_to_disk() -> None:
     if not links:
         lines.append("(Nothing here yet.)")
     try:
-        with open(config.get_facts_path(), "w") as f:
-            f.write("\n".join(lines) + "\n")
+        locked_atomic_write(config.get_facts_path(), "\n".join(lines) + "\n")
     except OSError:
         pass

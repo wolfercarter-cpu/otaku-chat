@@ -155,14 +155,45 @@ that feeds facts, all built on one shared foundation:
   by memory's and snippets' periodic self-curation passes (build a
   transcript, ask the model, pull a JSON array out of whatever it said),
   so each store module only owns what's actually specific to it.
+- `otakuchat/threats.py` — a lightweight prompt-injection/exfiltration
+  pattern scanner (trimmed down from Hermes-agent's `threat_patterns.py`
+  to the patterns actually relevant here — no shell/skills/C2 surface to
+  defend, just classic instruction-override injection, system-prompt
+  leak attempts, and secret-exfil phrasing). Every candidate fact, topic
+  link, and snippet is redacted *then* scanned before it's written —
+  redaction runs first so a real leaked secret gets masked-and-kept
+  instead of the whole entry being rejected outright, since a masked
+  secret never matches an injection pattern but a genuine payload still
+  does. A flagged entry is silently dropped, never partially stored: a
+  curated fact/snippet/bookmark replays into every future system prompt
+  forever, so nothing enters that store on anything less than a clean
+  scan. Not a security boundary against a determined attacker (same
+  caveat as `redact.py`) — a best-effort net so a poisoned conversation
+  or malicious search result can't quietly become permanent, always-
+  injected context.
+- `otakuchat/fileio.py` — `locked_atomic_write()`, shared by every mirror
+  write in this subsystem (`MEMORY.md`, `FACTS.md`, `SNIPPETS.md`,
+  `config.ini`, and Slate's own saves to any of those paths). A sidecar
+  `.lock` file (fcntl/msvcrt) serializes concurrent writers — the
+  periodic self-curation pass runs on a background thread
+  (`app.py`'s `@work(thread=True)`) and can otherwise land at the same
+  moment as a hand-edit through the Slate editor — and the write itself
+  goes to a temp file + `os.replace()` so a crash mid-write can't leave a
+  torn file on disk. Adapted from Hermes-agent's `memory_tool.py` file-
+  locking pattern.
 - `otakuchat/memory.py` — periodic, budgeted self-curation of durable
   facts. Below `RELEVANCE_THRESHOLD` (20) facts, every fact is always
   included, unranked, so the system prompt stays byte-stable for KV-cache
   reuse. Above it, ranking by relevance to the current message takes
   over — trading cache-prefix stability for relevance once the store is
-  big enough that dumping everything in stops making sense.
+  big enough that dumping everything in stops making sense. The prune
+  limit (`[MEMORY] max_facts_stored`, default 200) is a config key, not
+  the hardcoded literal it used to be.
 - `otakuchat/facts.py` — topic→URL curation fed directly by web search
-  results, strictly relevance-gated retrieval (see "Self-curation" above)
+  results, strictly relevance-gated retrieval (see "Self-curation"
+  above). A search result's description is the least-trusted text in
+  this app (raw third-party web content) — scanned before it's ever
+  filed away as a bookmark.
 - `otakuchat/snippets.py` — self-curating code-snippet library, same
   hidden-side-call pattern as `memory.py`, strictly relevance-gated
   retrieval

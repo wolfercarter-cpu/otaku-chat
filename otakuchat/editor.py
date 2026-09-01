@@ -30,6 +30,7 @@ from textual.widgets import Input, Static, TextArea
 from textual.widgets.text_area import TextAreaTheme
 
 from .autocomplete import AutoComplete, DropdownItem, TargetState
+from .fileio import locked_atomic_write
 
 # otaku-purple palette (#8b5cf6 purple, #a855f7 violet, #06b6d4 cyan) —
 # see master.tcss's header/prompt colors for the same three used elsewhere.
@@ -297,7 +298,7 @@ class Slate(Screen[None]):
     def action_save_file(self) -> None:
         editor = self.query_one("#editor", SlateTextArea)
         try:
-            self.current_file_path.write_text(editor.text, encoding="utf-8")
+            locked_atomic_write(self.current_file_path, editor.text)
         except OSError as e:
             self.notify(f"Could not save {self.current_file_path.name}: {e}", title="Save Error", severity="error")
             return

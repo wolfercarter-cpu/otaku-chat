@@ -9,7 +9,9 @@ its next system prompt. See curation.py for the side-call/JSON-extraction
 plumbing this shares with snippets.py's self-curation pass.
 """
 from . import config, curation, db
+from .fileio import locked_atomic_write
 from .redact import redact_secrets
+from .threats import scan_for_threats
 
 # Below this many curated facts, always include the full store unranked
 # (keeps the system prompt byte-stable for KV-cache reuse). Above it,
@@ -42,12 +44,20 @@ def curate_from_turns(api_url: str, model: str, turns: list[dict]) -> list[str]:
         fact = str(item).strip().strip("-* ")
         if not fact or len(fact) > 300:
             continue
-        fact, _ = redact_secrets(fact)  # never let a leaked secret become a permanent fact
+        fact, _ = redact_secrets(fact)  # mask a leaked secret before the threat scan sees it
+        if scan_for_threats(fact):
+            # A curated fact replays into every future system prompt —
+            # never let an injection payload (from a poisoned conversation,
+            # a scraped page that leaked into context via /add, etc.)
+            # become permanent, silently-always-included text. Runs AFTER
+            # redaction so a real secret gets masked-and-kept rather than
+            # rejected outright.
+            continue
         if db.add_fact(fact):
             added.append(fact)
 
     # Keep the store bounded
-    db.prune_oldest_facts(keep=200)
+    db.prune_oldest_facts(keep=config.get_max_memory_facts_stored())
     return added
 
 
@@ -87,8 +97,7 @@ def render_memory_block(query: str | None = None, max_chars: int | None = None) 
             block = "## Curated Memory\n\n" + "\n".join(lines) + "\n"
 
     try:
-        with open(config.get_memory_path(), "w") as f:
-            f.write(block)
+        locked_atomic_write(config.get_memory_path(), block)
     except OSError:
         pass
 

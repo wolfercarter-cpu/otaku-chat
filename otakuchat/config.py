@@ -48,6 +48,8 @@ DEFAULTS = {
     "MEMORY": {
         "curation_interval_turns": "8",
         "max_memory_chars": "6000",
+        # cap on stored curated facts before the oldest get pruned
+        "max_facts_stored": "200",
     },
     "CONTEXT": {
         # once a session's transmitted history exceeds this many messages,
@@ -152,8 +154,13 @@ def _get_config() -> ConfigParser:
 
 def _save_config(parser: ConfigParser) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_FILE, "w") as f:
-        parser.write(f)
+    from io import StringIO
+
+    from .fileio import locked_atomic_write
+
+    buf = StringIO()
+    parser.write(buf)
+    locked_atomic_write(CONFIG_FILE, buf.getvalue())
 
 
 def _set(section: str, key: str, value: str) -> None:
@@ -284,6 +291,10 @@ def get_curation_interval() -> int:
 
 def get_max_memory_chars() -> int:
     return _get_int("MEMORY", "max_memory_chars", 6000)
+
+
+def get_max_memory_facts_stored() -> int:
+    return _get_int("MEMORY", "max_facts_stored", 200)
 
 
 # --- CONTEXT (trajectory compression) ---
