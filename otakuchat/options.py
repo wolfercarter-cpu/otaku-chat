@@ -11,7 +11,6 @@ MENU_ITEMS = [
     ("vault", "/vault"),
     ("import", "/import"),
     ("functions", "/functions"),
-    ("youtube", "/youtube"),
     ("config", "/config"),
     ("new", "/new"),
     ("sessions", "/sessions"),

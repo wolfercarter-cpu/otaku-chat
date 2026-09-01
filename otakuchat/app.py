@@ -17,9 +17,10 @@ from typing import Callable
 
 from textual import work
 from textual.app import App, ComposeResult
+from textual.containers import VerticalScroll
 from textual.widgets import Label, Markdown
 
-from . import config, context, db, extract, faas, facts, memory, patterns, reasoning, search, snippets, vault, youtube
+from . import config, context, db, extract, faas, facts, memory, patterns, reasoning, search, snippets, vault
 from .editor import Slate
 from .faas_ui import FunctionArgsPrompt, FunctionCallConfirm, FunctionCallResult, build_functions_menu
 from .inputer import TextPrompt
@@ -39,7 +40,6 @@ COMMANDS = [
     ("/vault", "Browse, remove, seed, or wipe imported vault content (fuzzy-searchable)."),
     ("/import [url]", "Import a git repo (.git), .zip, or single file into the vault; no arg opens a URL prompt."),
     ("/functions", "Browse and manually fire user-defined functions (the model can also request calls; every call needs your Yes/No)."),
-    ("/youtube <url>", "Fetch a YouTube video's transcript and summarize/explain it."),
     ("/config", "Open config.ini (model, api url, boost mode) in your editor."),
     ("/new", "Start a fresh session, clearing the visible chat."),
     ("/sessions", "Browse and resume a past session, or press 'd' on one to delete it permanently."),
@@ -92,7 +92,8 @@ class OtakuChat(App):
 
     def compose(self) -> ComposeResult:
         yield Label("OtakuChat", id="main-l1")
-        yield Markdown(self.conversation_history, id="chat-output")
+        with VerticalScroll(id="chat-scroll"):
+            yield Markdown(self.conversation_history, id="chat-output")
         yield ChatInput(id="main-i1")
 
     def on_mount(self) -> None:
@@ -247,25 +248,45 @@ class OtakuChat(App):
 
     # -- UI helpers ----------------------------------------------------
 
+    def _update_chat_output(self, markdown_text: str) -> None:
+        """Update #chat-output and scroll #chat-scroll to the bottom once
+        the new content has actually rendered.
+
+        Markdown.update() returns an AwaitComplete — its markdown parse/
+        mount happens asynchronously (batched, off the main thread), so
+        calling scroll_end() synchronously right after update() fires
+        before the widget has actually resized and silently no-ops
+        (scroll_end computes against the OLD, pre-update virtual size).
+        Awaiting the AwaitComplete in a worker before scrolling is the
+        only reliable way to scroll after the content that determines
+        how far there IS to scroll actually exists.
+        """
+        awaitable = self.query_one("#chat-output", Markdown).update(markdown_text)
+
+        async def _scroll_once_rendered() -> None:
+            await awaitable
+            self.query_one("#chat-scroll", VerticalScroll).scroll_end(animate=False)
+
+        self.run_worker(_scroll_once_rendered(), exclusive=True, group="chat-scroll")
+
     def append_to_ui(self, text: str) -> None:
         self.conversation_history += text
-        self.query_one("#chat-output", Markdown).update(self.conversation_history)
-        self.query_one("#chat-output", Markdown).scroll_end(animate=False)
+        self._update_chat_output(self.conversation_history)
 
     def stream_to_ui(self, chunk: str) -> None:
         self.active_stream += chunk
-        self.query_one("#chat-output", Markdown).update(
+        self._update_chat_output(
             self.conversation_history + self.active_thinking + self.active_stream
         )
 
     def thinking_to_ui(self, chunk: str) -> None:
         self.active_thinking += chunk
-        self.query_one("#chat-output", Markdown).update(
+        self._update_chat_output(
             self.conversation_history + self.active_thinking + self.active_stream
         )
 
     def status_to_ui(self, note: str) -> None:
-        self.query_one("#chat-output", Markdown).update(
+        self._update_chat_output(
             self.conversation_history + self.active_thinking + self.active_stream + f"\n\n*{note}*"
         )
 
@@ -319,7 +340,7 @@ class OtakuChat(App):
             self.last_perf_id = None
             self._system_prompt_cache = None
             self.conversation_history = f"*{BANNER}*\n\n*System: started a new session (#{self.session_id}).*"
-            self.query_one("#chat-output", Markdown).update(self.conversation_history)
+            self._update_chat_output(self.conversation_history)
             return
 
         if lower == "/sessions":
@@ -392,17 +413,6 @@ class OtakuChat(App):
 
         if lower == "/functions":
             self.push_screen(build_functions_menu(), self.handle_functions_menu_pick)
-            return
-
-        if lower.startswith("/youtube"):
-            arg = cmd[len("/youtube"):].strip()
-            if arg:
-                self.handle_youtube_request(arg)
-            else:
-                self.push_screen(
-                    TextPrompt("YouTube URL or video ID to summarize:", placeholder="https://youtu.be/..."),
-                    self.handle_youtube_request,
-                )
             return
 
         if lower == "/config":
@@ -497,25 +507,6 @@ class OtakuChat(App):
             self.call_from_thread(self.append_to_ui, f"\n\n*Import failed: {e}*")
             return
         self.call_from_thread(self.append_to_ui, f"\n\n*System: {message}*")
-
-    # --- YouTube transcript summarize/explain --------------------------
-
-    def handle_youtube_request(self, url: str | None) -> None:
-        if not url:
-            return
-        self.append_to_ui(f"\n\n*System: fetching transcript for '{url}'...*")
-        self.run_youtube_bg(url)
-
-    @work(thread=True)
-    def run_youtube_bg(self, url: str) -> None:
-        try:
-            summary = youtube.summarize_transcript(url, self.api_url, self.model)
-        except youtube.YouTubeError as e:
-            self.call_from_thread(self.append_to_ui, f"\n\n*YouTube fetch failed: {e}*")
-            return
-        self.call_from_thread(
-            self.append_to_ui, f"\n\n**YouTube summary ({url}):**\n\n{summary}"
-        )
 
     # --- FaaS "hands": manual fire from /functions ----------------------
 
@@ -622,7 +613,7 @@ class OtakuChat(App):
             elif r["role"] == "assistant":
                 rendered.append(f"\n\n**Assistant:**\n{r['content']}")
         self.conversation_history = "".join(rendered) if len(rendered) > 2 else "\n\n".join(rendered)
-        self.query_one("#chat-output", Markdown).update(self.conversation_history)
+        self._update_chat_output(self.conversation_history)
         self.refresh_header()
 
     def handle_session_delete_confirm(self, confirmed: bool, session_id: int, title: str) -> None:
@@ -641,7 +632,7 @@ class OtakuChat(App):
                 f"*{BANNER}*\n\n*System: deleted session '{title}' "
                 "(it was active, so a new one was started).*"
             )
-            self.query_one("#chat-output", Markdown).update(self.conversation_history)
+            self._update_chat_output(self.conversation_history)
         else:
             self.append_to_ui(f"\n\n*System: deleted session '{title}'.*")
 
@@ -823,9 +814,7 @@ class OtakuChat(App):
         self.conversation_history += result.content
         self.active_stream = ""
         self.active_thinking = ""
-        self.call_from_thread(
-            self.query_one("#chat-output", Markdown).update, self.conversation_history
-        )
+        self.call_from_thread(self._update_chat_output, self.conversation_history)
 
         db.add_message(self.session_id, "assistant", result.content, boosted=result.boosted)
         self.last_perf_id = result.perf_id

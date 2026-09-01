@@ -51,7 +51,6 @@ uv run otakuchat
 - `/vault`         — browse, remove, seed, or wipe imported vault content (fuzzy-searchable list)
 - `/import [url]`  — import a git repo (.git), .zip, or single file into the vault; no arg opens a URL prompt
 - `/functions`     — browse and manually fire user-defined functions ("FaaS hands" — see below); every call needs your Yes/No, no exceptions
-- `/youtube [url]` — fetch a YouTube video's transcript and have the active model summarize/explain it; no arg opens a URL prompt
 - `/config`        — open config.ini (model, api url, boost mode) in the built-in Slate editor
 - `/new`           — start a fresh session
 - `/sessions`      — browse and resume past sessions

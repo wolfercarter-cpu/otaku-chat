@@ -620,37 +620,42 @@ async def test_model_requested_call_with_no_call_block_does_nothing(app_env):
         assert app.screen is before_screen
 
 
-# --- /youtube ------------------------------------------------------------
+# --- UI bug regressions: auto-scroll + input overflow -------------------
 
-async def test_youtube_no_arg_opens_prompt(app_env):
-    from otakuchat.inputer import TextPrompt as TP
+async def test_chat_output_autoscrolls_to_bottom_on_new_content(app_env):
+    """Regression test: the chat output must track new content to the
+    bottom instead of staying anchored at the top — Markdown.update()
+    resolves asynchronously (batched block mounting), so scrolling
+    synchronously right after calling it used to compute against the
+    OLD (pre-update) size and silently no-op."""
+    from textual.containers import VerticalScroll
 
+    app = OtakuChat()
+    async with app.run_test(size=(100, 20)) as pilot:
+        await _settle(pilot)
+        scroll = app.query_one("#chat-scroll", VerticalScroll)
+        assert scroll.scroll_y == 0
+
+        long_content = "\n\n".join(f"Line block {i} " + ("word " * 20) for i in range(80))
+        app.append_to_ui(long_content)
+        for _ in range(8):
+            await pilot.pause()
+
+        assert scroll.max_scroll_y > 0, "content should have overflowed the viewport"
+        assert scroll.scroll_y == scroll.max_scroll_y, "chat output should be anchored to the bottom"
+
+
+async def test_chat_input_stays_within_screen_width(app_env):
+    """Regression test: #main-i1 used width: 1fr while docked bottom with
+    a 1-cell margin on both sides — Textual computes 1fr against the
+    full parent width BEFORE subtracting dock margins, so the widget's
+    right edge landed exactly `margin` cells past the screen edge
+    instead of wrapping text vertically inside its border."""
     app = OtakuChat()
     async with app.run_test(size=(100, 40)) as pilot:
         await _settle(pilot)
-        app.handle_command("/youtube")
-        await _settle(pilot)
-        assert isinstance(app.screen, TP)
-
-
-async def test_youtube_with_url_fetches_and_summarizes(app_env):
-    from otakuchat import youtube
-
-    class _FakeSnippet:
-        def __init__(self, text):
-            self.text = text
-
-    class _FakeFetched:
-        def __init__(self, snippets):
-            self.snippets = snippets
-
-    fake_transcript = _FakeFetched([_FakeSnippet("This is a test video about pytest.")])
-
-    app = OtakuChat()
-    async with app.run_test(size=(100, 40)) as pilot:
-        await _settle(pilot)
-        with mock.patch.object(youtube.YouTubeTranscriptApi, "fetch", return_value=fake_transcript):
-            with mock.patch.object(youtube.ollama_client, "chat_once", return_value="A short summary."):
-                app.handle_command("/youtube https://youtu.be/dQw4w9WgXcQ")
-                await _settle(pilot, n=6)
-        assert "A short summary." in app.conversation_history
+        chat_input = app.query_one("#main-i1")
+        right_edge = chat_input.region.x + chat_input.region.width
+        assert right_edge <= app.size.width, (
+            f"chat input's right edge ({right_edge}) overflows the {app.size.width}-wide screen"
+        )

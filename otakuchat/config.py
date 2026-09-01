@@ -119,12 +119,6 @@ DEFAULTS = {
         # git clone / zip download / single-file download timeout
         "import_timeout_s": "60",
     },
-    "YOUTUBE": {
-        # a fetched transcript longer than this is truncated before being
-        # handed to the model (full transcript is what got cached; this
-        # only bounds what a single summarize/explain call sends)
-        "max_transcript_chars": "20000",
-    },
     "FAAS": {
         # wall-clock seconds a single model-requested function call is
         # allowed to run in its subprocess before being killed
@@ -435,10 +429,6 @@ def get_vault_max_chunk_chars() -> int:
 
 def get_vault_import_timeout() -> int:
     return _get_int("VAULT", "import_timeout_s", 60)
-
-
-def get_youtube_max_transcript_chars() -> int:
-    return _get_int("YOUTUBE", "max_transcript_chars", 20000)
 
 
 def get_faas_call_timeout() -> int:
