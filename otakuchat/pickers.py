@@ -2,9 +2,12 @@ from pathlib import Path
 from typing import Iterable
 
 from textual.app import ComposeResult
-from textual.containers import Container
+from textual.containers import Container, Vertical
+from textual.css.query import NoMatches
+from textual.events import Key
+from textual.fuzzy import Matcher
 from textual.screen import ModalScreen, Screen
-from textual.widgets import DirectoryTree, Label, OptionList
+from textual.widgets import DirectoryTree, Input, Label, OptionList
 from textual.widgets.option_list import Option
 
 
@@ -50,6 +53,17 @@ class _ListPickerBehavior:
     (Screen vs. ModalScreen isn't just CSS — ModalScreen also changes
     binding precedence and dims what's behind it), so the actual picking
     logic lives once here instead of twice.
+
+    Also owns fuzzy search-as-you-type: a hidden `#picker-search` Input
+    filters `#picker-list` live via textual.fuzzy.Matcher (the same
+    matcher Textual's own command palette uses), with the highlight
+    ranking's match spans shown inline. Typing while the OptionList has
+    focus jumps focus to the search box instead of doing nothing (a bare
+    OptionList has no letter-key behavior at all); Up/Down from the
+    search box hands focus back to the list to browse results with the
+    keyboard. A subclass with its own single-key bindings (SessionPicker's
+    `d` to delete) is respected — those keys are never intercepted for
+    the filter, so the binding still fires normally.
     """
 
     def __init__(
@@ -62,14 +76,106 @@ class _ListPickerBehavior:
         self.header = header
         self.options = options
         self.empty_message = empty_message
+        self._filtered: list[tuple[str, str]] = options
+
+    def _reserved_keys(self) -> set[str]:
+        """Single-key bindings this screen (or a subclass, e.g.
+        SessionPicker's 'd') already owns — never redirected into the
+        search box, so the binding keeps firing normally."""
+        reserved: set[str] = set()
+        for binding in getattr(self, "BINDINGS", []):
+            key = binding[0] if isinstance(binding, tuple) else binding.key
+            reserved.update(key.split(","))
+        return reserved
 
     def on_mount(self) -> None:
+        self._render_options(self.options)
+        if not self.options:
+            try:
+                self.query_one("#picker-search", Input).display = False
+            except NoMatches:
+                pass
+
+    def _render_options(self, items: list[tuple[str, str]], query: str = "") -> None:
         opt_list = self.query_one("#picker-list", OptionList)
+        opt_list.clear_options()
         if not self.options:
             opt_list.add_option(Option(self.empty_message, disabled=True))
+            self._filtered = []
             return
-        for label, value in self.options:
-            opt_list.add_option(Option(label, id=value))
+        for label, value in items:
+            prompt = Matcher(query).highlight(label) if query else label
+            opt_list.add_option(Option(prompt, id=value))
+        self._filtered = items
+        if items:
+            opt_list.highlighted = 0
+
+    def _apply_filter(self, query: str) -> None:
+        query = query.strip()
+        if not query:
+            self._render_options(self.options)
+            return
+        matcher = Matcher(query)
+        scored = [
+            (matcher.match(label), (label, value)) for label, value in self.options
+        ]
+        ranked = [item for score, item in sorted(scored, key=lambda pair: pair[0], reverse=True) if score > 0]
+        self._render_options(ranked, query=query)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "picker-search":
+            self._apply_filter(event.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in the search box picks the currently highlighted option —
+        same effect as pressing Enter with the OptionList itself focused,
+        so search-then-Enter is a single fluid motion without an extra
+        Tab/Down to move focus first."""
+        if event.input.id != "picker-search":
+            return
+        try:
+            opt_list = self.query_one("#picker-list", OptionList)
+        except NoMatches:
+            return
+        if opt_list.highlighted is None or not (0 <= opt_list.highlighted < len(self._filtered)):
+            return
+        _, value = self._filtered[opt_list.highlighted]
+        self._handle_pick(value)
+
+    def on_key(self, event: Key) -> None:
+        """Smart focus routing: typing on the list jumps to search;
+        Up/Down from search hands back to the list; Tab autocompletes
+        the search box to the top fuzzy match."""
+        try:
+            search = self.query_one("#picker-search", Input)
+            opt_list = self.query_one("#picker-list", OptionList)
+        except NoMatches:
+            return
+        if not search.display:
+            return  # empty-options case: no search box to route into
+
+        if event.key in self._reserved_keys():
+            return  # let a subclass binding (e.g. SessionPicker's 'd') fire normally
+
+        if event.is_printable and opt_list.has_focus:
+            search.focus()
+            if event.character:
+                search.value += event.character
+                search.cursor_position = len(search.value)
+            event.stop()
+        elif event.key == "down" and search.has_focus:
+            opt_list.focus()
+            opt_list.action_cursor_down()
+            event.stop()
+        elif event.key == "up" and search.has_focus:
+            opt_list.focus()
+            opt_list.action_cursor_up()
+            event.stop()
+        elif event.key == "tab" and search.has_focus and self._filtered:
+            top_label = self._filtered[0][0]
+            search.value = top_label
+            search.cursor_position = len(top_label)
+            event.stop()
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         # Routes through a plain method rather than being overridden
@@ -98,7 +204,9 @@ class ListPicker(_ListPickerBehavior, Screen):
 
     def compose(self) -> ComposeResult:
         yield Label(self.header, id="picker-header")
-        yield OptionList(id="picker-list")
+        with Vertical():
+            yield OptionList(id="picker-list")
+            yield Input(placeholder="Search...", id="picker-search")
 
 
 class ModalListPicker(_ListPickerBehavior, ModalScreen[str]):
@@ -114,6 +222,7 @@ class ModalListPicker(_ListPickerBehavior, ModalScreen[str]):
         with Container(id="picker-c1"):
             yield Label(self.header, id="picker-header")
             yield OptionList(id="picker-list")
+            yield Input(placeholder="Search...", id="picker-search")
 
 
 class SessionPicker(ListPicker):

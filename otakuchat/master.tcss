@@ -55,7 +55,22 @@ ListPicker #picker-header {
 ListPicker #picker-list {
     height: 1fr;
     border: solid #8b5cf6;
-    margin: 1;
+    margin: 1 1 0 1;
+}
+
+#picker-search {
+    margin: 0 1 1 1;
+    border: tall #06b6d4;
+}
+
+ModalListPicker #picker-list {
+    height: 12;
+    border: solid #8b5cf6;
+    margin-bottom: 1;
+}
+
+ModalListPicker #picker-search {
+    border: tall #06b6d4;
 }
 
 ModalListPicker, TextPrompt, ConfirmDialog {

@@ -230,3 +230,127 @@ async def test_text_prompt_escape_dismisses_none():
         await pilot.press("escape")
         await _settle(pilot)
         assert results == [None]
+
+
+# --- ListPicker fuzzy search-as-you-type -------------------------------------
+
+async def test_typing_while_list_focused_redirects_into_search_box():
+    app = _Host()
+    async with app.run_test() as pilot:
+        app.push_screen(ListPicker("pick", [("Alpha", "a"), ("Beta", "b"), ("Gamma", "g")]))
+        await _settle(pilot)
+        opt = app.screen.query_one("#picker-list", OptionList)
+        opt.focus()
+        await _settle(pilot)
+        await pilot.press("b")
+        await _settle(pilot)
+        search = app.screen.query_one("#picker-search", Input)
+        assert search.value == "b"
+        assert search.has_focus
+
+
+async def test_search_filters_options_by_fuzzy_match():
+    app = _Host()
+    async with app.run_test() as pilot:
+        app.push_screen(ListPicker("pick", [("Alpha", "a"), ("Beta", "b"), ("Gamma", "g")]))
+        await _settle(pilot)
+        search = app.screen.query_one("#picker-search", Input)
+        search.focus()
+        for ch in "bet":
+            await pilot.press(ch)
+        await _settle(pilot)
+        opt = app.screen.query_one("#picker-list", OptionList)
+        assert opt.option_count == 1
+        assert opt.get_option_at_index(0).id == "b"
+
+
+async def test_search_cleared_restores_full_option_list():
+    app = _Host()
+    async with app.run_test() as pilot:
+        app.push_screen(ListPicker("pick", [("Alpha", "a"), ("Beta", "b")]))
+        await _settle(pilot)
+        search = app.screen.query_one("#picker-search", Input)
+        search.focus()
+        await pilot.press("a")
+        await _settle(pilot)
+        search.value = ""
+        await pilot.pause()
+        await _settle(pilot)
+        opt = app.screen.query_one("#picker-list", OptionList)
+        assert opt.option_count == 2
+
+
+async def test_enter_in_search_box_picks_highlighted_option():
+    app = _Host()
+    async with app.run_test() as pilot:
+        results = []
+        app.push_screen(
+            ListPicker("pick", [("Alpha", "a"), ("Beta", "b")]), results.append
+        )
+        await _settle(pilot)
+        search = app.screen.query_one("#picker-search", Input)
+        search.focus()
+        for ch in "bet":
+            await pilot.press(ch)
+        await _settle(pilot)
+        await pilot.press("enter")
+        await _settle(pilot)
+        assert results == ["b"]
+
+
+async def test_down_from_search_moves_focus_and_cursor_into_list():
+    app = _Host()
+    async with app.run_test() as pilot:
+        app.push_screen(ListPicker("pick", [("Alpha", "a"), ("Beta", "b"), ("Gamma", "g")]))
+        await _settle(pilot)
+        search = app.screen.query_one("#picker-search", Input)
+        search.focus()
+        await pilot.press("down")
+        await _settle(pilot)
+        opt = app.screen.query_one("#picker-list", OptionList)
+        assert opt.has_focus
+        assert opt.highlighted == 1
+
+
+async def test_tab_autocompletes_search_to_top_match():
+    app = _Host()
+    async with app.run_test() as pilot:
+        app.push_screen(ListPicker("pick", [("Alpha", "a"), ("Beta", "b")]))
+        await _settle(pilot)
+        search = app.screen.query_one("#picker-search", Input)
+        search.focus()
+        for ch in "alp":
+            await pilot.press(ch)
+        await _settle(pilot)
+        await pilot.press("tab")
+        await _settle(pilot)
+        assert search.value == "Alpha"
+
+
+async def test_session_picker_d_binding_still_fires_with_search_box_present():
+    """Regression guard: adding a search Input to every picker must not
+    swallow a subclass's own single-key binding (SessionPicker's 'd')."""
+    app = _Host()
+    async with app.run_test() as pilot:
+        results = []
+        app.push_screen(
+            SessionPicker("Sessions", [("#1 chat", "1"), ("#2 chat", "2")]),
+            results.append,
+        )
+        await _settle(pilot)
+        opt = app.screen.query_one("#picker-list", OptionList)
+        opt.focus()
+        opt.highlighted = 1
+        await _settle(pilot)
+        await pilot.press("d")
+        await _settle(pilot)
+        assert results == [("delete", "2")]
+
+
+async def test_empty_options_hides_search_box():
+    app = _Host()
+    async with app.run_test() as pilot:
+        app.push_screen(ListPicker("pick", [], "Nothing here."))
+        await _settle(pilot)
+        search = app.screen.query_one("#picker-search", Input)
+        assert search.display is False
