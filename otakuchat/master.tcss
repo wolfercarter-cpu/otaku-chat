@@ -14,7 +14,7 @@ Screen {
 }
 
 #chat-leap-input {
-    border: tall #8b5cf6;
+    border: round #8b5cf6;
 }
 
 #chat-scroll {
@@ -54,7 +54,7 @@ Screen {
 
 #main-i1 {
     border: none;
-    border-top: tall darkviolet;
+    border-top: round darkviolet;
     width: 100%;
 }
 
@@ -65,7 +65,7 @@ PromptEditor {
 
 #prompt-editor-area {
     height: 1fr;
-    border: solid #8b5cf6;
+    border: round #8b5cf6;
     margin: 1;
 }
 
@@ -90,23 +90,23 @@ ListPicker #picker-header {
 
 ListPicker #picker-list {
     height: 1fr;
-    border: solid #8b5cf6;
+    border: round #8b5cf6;
     margin: 1 1 0 1;
 }
 
 #picker-search {
     margin: 0 1 1 1;
-    border: tall #06b6d4;
+    border: round #06b6d4;
 }
 
 ModalListPicker #picker-list {
     height: 12;
-    border: solid #8b5cf6;
+    border: round #8b5cf6;
     margin-bottom: 1;
 }
 
 ModalListPicker #picker-search {
-    border: tall #06b6d4;
+    border: round #06b6d4;
 }
 
 ModalListPicker, TextPrompt, ConfirmDialog {
@@ -116,7 +116,7 @@ ModalListPicker, TextPrompt, ConfirmDialog {
 #picker-c1, #iptr-c1, #confirm-c1, #faas-confirm-c1, #faas-result-c1 {
     width: 60%;
     height: auto;
-    border: solid #8b5cf6;
+    border: round #8b5cf6;
     padding: 1 2;
     background: $surface;
 }
@@ -157,7 +157,7 @@ Slate {
 #leap-box {
     width: 100%;
     border: none;
-    border-bottom: solid #8b5cf6;
+    border-bottom: round #8b5cf6;
     background: $panel;
     padding: 0 1;
 }
@@ -168,7 +168,7 @@ Slate {
 }
 
 #leap-box:focus {
-    border-bottom: solid #a855f7;
+    border-bottom: round #a855f7;
 }
 
 #editor {
@@ -191,12 +191,12 @@ VaultManager {
 
 #vault-search {
     margin: 0 1 1 1;
-    border: tall #06b6d4;
+    border: round #06b6d4;
 }
 
 #vault-list {
     height: 1fr;
-    border: solid #8b5cf6;
+    border: round #8b5cf6;
     margin: 0 1 1 1;
 }
 
@@ -218,7 +218,7 @@ VaultManager {
 #vault-import-c1 {
     width: 70%;
     height: auto;
-    border: solid #8b5cf6;
+    border: round #8b5cf6;
     padding: 1 2;
     background: $surface;
 }
