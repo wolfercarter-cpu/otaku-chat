@@ -333,6 +333,63 @@ async def test_maybe_web_search_extracts_page_content_for_top_results(app_env):
     assert "1 with full page content" in app._last_search_note
 
 
+# --- /sources ------------------------------------------------------------
+
+async def test_sources_with_no_prior_search_shows_a_helpful_note(app_env):
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        app.handle_command("/sources")
+        await _settle(pilot)
+    assert "no web sources" in app.conversation_history
+
+
+async def test_sources_after_a_search_lists_every_url_and_fetch_status(app_env):
+    """Ties into the real user-facing gap: web search results were
+    included in a turn with no way to actually view which URLs were
+    used or whether their content was fetched. /sources must surface
+    both pieces for every result from the last search."""
+    import json
+
+    parser = config._get_config()
+    parser["SEARCH"]["brave_api_key"] = "fake-key"
+    config._save_config(parser)
+
+    search_payload = {
+        "web": {
+            "results": [
+                {"title": "Fetched OK", "url": "https://example.com/ok", "description": "d1"},
+                {"title": "Fetch Failed", "url": "https://example.com/bad", "description": "d2"},
+            ]
+        }
+    }
+    search_resp = mock.MagicMock()
+    search_resp.read.return_value = json.dumps(search_payload).encode("utf-8")
+    search_resp.__enter__.return_value = search_resp
+
+    page_resp = mock.MagicMock()
+    page_resp.headers = {"Content-Type": "text/html"}
+    page_resp.read.return_value = b"<p>Real extracted content.</p>"
+    page_resp.__enter__.return_value = page_resp
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+        db.add_message(app.session_id, "user", "some query")
+        with mock.patch(
+            "urllib.request.urlopen",
+            side_effect=[search_resp, page_resp, OSError("network down")],
+        ):
+            app.maybe_web_search("some query")
+        app.handle_command("/sources")
+        await _settle(pilot)
+
+    assert "https://example.com/ok" in app.conversation_history
+    assert "https://example.com/bad" in app.conversation_history
+    assert "full page content fetched" in app.conversation_history
+    assert "snippet only — fetch failed" in app.conversation_history
+
+
 # --- /memory /facts /snippets /config open the in-app Slate editor --------
 
 async def test_memory_command_opens_slate_editor(app_env):
@@ -659,3 +716,44 @@ async def test_chat_input_stays_within_screen_width(app_env):
         assert right_edge <= app.size.width, (
             f"chat input's right edge ({right_edge}) overflows the {app.size.width}-wide screen"
         )
+
+
+# --- modal centering -----------------------------------------------------
+
+async def test_every_modalscreen_subclass_is_centered(app_env):
+    """Regression test: VaultImportPrompt, FunctionCallConfirm, and
+    FunctionCallResult were left out of master.tcss's
+    'ModalListPicker, TextPrompt, ConfirmDialog { align: center middle; }'
+    rule, so they rendered pinned to the top-left corner of the screen
+    instead of centered like every other modal. Walk every ModalScreen
+    subclass in the app and assert the live, resolved style actually has
+    align: center middle — catching this class of bug for any modal
+    added later, not just the ones known about today."""
+    from otakuchat.faas_ui import FunctionCallConfirm, FunctionCallResult
+    from otakuchat.pickers import ConfirmDialog, ModalListPicker
+    from otakuchat.vault_ui import VaultImportPrompt
+
+    app = OtakuChat()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _settle(pilot)
+
+        screens = [
+            ModalListPicker("t", [("a", "a")], "none"),
+            TextPrompt("t"),
+            ConfirmDialog("t"),
+            VaultImportPrompt(),
+            FunctionCallConfirm("ping", {}),
+            FunctionCallResult("ping", True, "ok"),
+        ]
+        for screen in screens:
+            app.push_screen(screen)
+            await _settle(pilot)
+            assert screen.styles.align_horizontal == "center", (
+                f"{type(screen).__name__} is not horizontally centered"
+            )
+            assert screen.styles.align_vertical == "middle", (
+                f"{type(screen).__name__} is not vertically centered"
+            )
+            app.pop_screen()
+            await _settle(pilot)
+

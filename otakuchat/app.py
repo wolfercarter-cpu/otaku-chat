@@ -50,6 +50,7 @@ COMMANDS = [
     ("/pattern [name]", "Apply a curated prompt pattern (Fabric-style) to your next message, or clear with /pattern off."),
     ("/prompt", "Open a full-screen editor for composing a long/multi-line prompt."),
     ("/leap", "Expand the leap search bar and jump to text in the visible conversation."),
+    ("/sources", "List the web sources (URLs) used for the last turn's search grounding, and whether full page content was fetched."),
     ("/quit", "Exit OtakuChat (alias: /exit)."),
 ]
 
@@ -76,6 +77,7 @@ class OtakuChat(App):
         self.last_perf_id: int | None = None
         self.active_pattern: str | None = None
         self._last_search_note: str | None = None
+        self._last_search_results: list[dict] = []
 
         # Cache the assembled system prompt string and only rebuild it when
         # memory/soul actually change (memory.py rewrites are infrequent —
@@ -224,14 +226,17 @@ class OtakuChat(App):
         self._last_search_note = None
         api_key = config.get_brave_api_key()
         if not api_key or not query.strip():
+            self._last_search_results = []
             return None
         if on_status:
             on_status("searching web...")
         try:
             results = search.search_web(query, api_key, config.get_search_max_results())
         except search.SearchError:
+            self._last_search_results = []
             return None
         if not results:
+            self._last_search_results = []
             return None
         # Feed FACTS.md: file the URLs that actually had relevant info for
         # this query under it as the topic, so a recurring question can be
@@ -244,6 +249,7 @@ class OtakuChat(App):
             on_status("reading top results...")
         enriched = extract.extract_top_results(results)
         extracted_count = sum(1 for r in enriched if r.get("excerpt"))
+        self._last_search_results = enriched
         self._last_search_note = (
             f"included {len(results)} web result(s) for this turn "
             f"({extracted_count} with full page content)"
@@ -380,6 +386,21 @@ class OtakuChat(App):
 
         if lower == "/leap":
             self.query_one(ChatLeapBar).expand_and_focus()
+            return
+
+        if lower == "/sources":
+            if not self._last_search_results:
+                self.append_to_ui(
+                    "\n\n*System: no web sources for the current turn yet "
+                    "— either search isn't configured (add a Brave API key "
+                    "via /config), or the last turn didn't trigger a search.*"
+                )
+                return
+            lines = ["**Sources from the last search-grounded turn:**"]
+            for i, r in enumerate(self._last_search_results, 1):
+                has_content = "full page content fetched" if r.get("excerpt") else "snippet only — fetch failed"
+                lines.append(f"{i}. [{r['title']}]({r['url']})  _{has_content}_")
+            self.append_to_ui("\n\n" + "\n".join(lines))
             return
 
         if lower == "/new":
@@ -871,7 +892,10 @@ class OtakuChat(App):
         self.call_from_thread(self.maybe_handle_model_call_requests, result.content)
 
         if self._last_search_note:
-            self.call_from_thread(self.append_to_ui, f"\n\n*[websearch] {self._last_search_note}*")
+            self.call_from_thread(
+                self.append_to_ui,
+                f"\n\n*[websearch] {self._last_search_note} — use /sources to view them.*",
+            )
 
         note = reasoning.self_tune_threshold(self.model)
         if note:

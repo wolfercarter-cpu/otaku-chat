@@ -109,7 +109,7 @@ ModalListPicker #picker-search {
     border: round #06b6d4;
 }
 
-ModalListPicker, TextPrompt, ConfirmDialog {
+ModalListPicker, TextPrompt, ConfirmDialog, VaultImportPrompt, FunctionCallConfirm, FunctionCallResult {
     align: center middle;
 }
 
