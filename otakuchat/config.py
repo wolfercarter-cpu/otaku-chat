@@ -95,6 +95,16 @@ DEFAULTS = {
         # Chromium via playwright, if installed (uv sync --extra browser).
         # Never touches playwright at all when false/uninstalled.
         "use_browser_fallback": "false",
+        # opt-in: after extracting a page's raw text, run one extra fast
+        # local-model pass (chat_once, non-streaming) to condense it before
+        # it enters the system prompt — trades one more Ollama round-trip
+        # per extracted result for a smaller, less noisy excerpt. Off by
+        # default since it's a real latency cost; extraction itself always
+        # runs concurrently across results regardless of this setting.
+        "use_summarize": "false",
+        # target length for a summarized excerpt (chars) — separate from
+        # max_chars, which still applies to the raw fallback text
+        "summarize_max_chars": "600",
     },
     "VAULT": {
         # vault dirs: "vault" (wipeable dump) and "seed" (survives-wipe
@@ -399,6 +409,14 @@ def get_extract_cache_ttl_hours() -> int:
 
 def get_extract_use_browser_fallback() -> bool:
     return _get("EXTRACT", "use_browser_fallback", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+def get_extract_use_summarize() -> bool:
+    return _get("EXTRACT", "use_summarize", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+def get_extract_summarize_max_chars() -> int:
+    return _get_int("EXTRACT", "summarize_max_chars", 600)
 
 
 # --- VAULT (dump/seed RAG-style import directories) ---

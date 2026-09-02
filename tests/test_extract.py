@@ -187,6 +187,108 @@ def test_extract_top_results_degrades_gracefully_on_per_url_failure(isolated_env
     assert enriched[0]["title"] == "A"  # original result data preserved
 
 
+def test_extract_top_results_fetches_concurrently_not_sequentially(isolated_env):
+    """Regression/perf test: extract_top_results used to fetch each URL
+    one at a time, so N results each blocking up to EXTRACT.timeout_s cost
+    up to N * timeout_s wall time. It must now run them through a
+    ThreadPoolExecutor so 3 slow (artificially delayed) fetches finish in
+    close to one fetch's time, not three."""
+    import time
+
+    from otakuchat import config
+
+    parser = config._get_config()
+    parser["EXTRACT"]["top_n"] = "3"
+    config._save_config(parser)
+
+    def _slow_extract(url, *args, **kwargs):
+        time.sleep(0.3)
+        return f"content for {url}"
+
+    results = [
+        {"title": "A", "url": "https://a.com", "description": "da"},
+        {"title": "B", "url": "https://b.com", "description": "db"},
+        {"title": "C", "url": "https://c.com", "description": "dc"},
+    ]
+    with mock.patch("otakuchat.extract.extract_url", side_effect=_slow_extract):
+        t0 = time.perf_counter()
+        enriched = extract.extract_top_results(results)
+        elapsed = time.perf_counter() - t0
+
+    assert len(enriched) == 3
+    assert all(r["excerpt"] for r in enriched)
+    # 3 sequential 0.3s fetches would take ~0.9s; concurrent should land
+    # well under that (generous ceiling to avoid CI flakiness).
+    assert elapsed < 0.7, f"extraction took {elapsed:.2f}s — looks sequential, not concurrent"
+
+
+# --- summarize_excerpt / extract_top_results summarize gating -----------
+
+def test_summarize_excerpt_returns_condensed_text_on_success(isolated_env):
+    with mock.patch("otakuchat.extract.chat_once", return_value="Condensed summary."):
+        result = extract.summarize_excerpt("http://x", "model", "a long raw excerpt " * 50, "some query")
+    assert result == "Condensed summary."
+
+
+def test_summarize_excerpt_falls_back_to_raw_on_ollama_error(isolated_env):
+    from otakuchat.ollama_client import OllamaError
+
+    with mock.patch("otakuchat.extract.chat_once", side_effect=OllamaError("down")):
+        result = extract.summarize_excerpt("http://x", "model", "the raw excerpt text", "some query")
+    assert result == "the raw excerpt text"
+
+
+def test_summarize_excerpt_falls_back_to_raw_on_empty_response(isolated_env):
+    with mock.patch("otakuchat.extract.chat_once", return_value=""):
+        result = extract.summarize_excerpt("http://x", "model", "the raw excerpt text", "some query")
+    assert result == "the raw excerpt text"
+
+
+def test_extract_top_results_skips_summarize_when_config_off(isolated_env):
+    results = [{"title": "A", "url": "https://a.com", "description": "da"}]
+    with mock.patch("otakuchat.extract.extract_url", return_value="raw excerpt"):
+        with mock.patch("otakuchat.extract.chat_once") as chat_mock:
+            enriched = extract.extract_top_results(
+                results, api_url="http://x", model="m", query="q"
+            )
+    chat_mock.assert_not_called()
+    assert enriched[0]["excerpt"] == "raw excerpt"
+
+
+def test_extract_top_results_summarizes_when_config_on(isolated_env):
+    from otakuchat import config
+
+    parser = config._get_config()
+    parser["EXTRACT"]["use_summarize"] = "true"
+    config._save_config(parser)
+
+    results = [{"title": "A", "url": "https://a.com", "description": "da"}]
+    with mock.patch("otakuchat.extract.extract_url", return_value="raw excerpt"):
+        with mock.patch("otakuchat.extract.chat_once", return_value="condensed") as chat_mock:
+            enriched = extract.extract_top_results(
+                results, api_url="http://x", model="m", query="q"
+            )
+    chat_mock.assert_called_once()
+    assert enriched[0]["excerpt"] == "condensed"
+
+
+def test_extract_top_results_summarize_off_when_no_model_given(isolated_env):
+    """use_summarize=true alone isn't enough — api_url/model must also be
+    passed (app.py always passes them; this guards direct callers)."""
+    from otakuchat import config
+
+    parser = config._get_config()
+    parser["EXTRACT"]["use_summarize"] = "true"
+    config._save_config(parser)
+
+    results = [{"title": "A", "url": "https://a.com", "description": "da"}]
+    with mock.patch("otakuchat.extract.extract_url", return_value="raw excerpt"):
+        with mock.patch("otakuchat.extract.chat_once") as chat_mock:
+            enriched = extract.extract_top_results(results)
+    chat_mock.assert_not_called()
+    assert enriched[0]["excerpt"] == "raw excerpt"
+
+
 def test_format_extract_block_empty_results_returns_empty_string():
     assert extract.format_extract_block([]) == ""
 

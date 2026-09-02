@@ -146,6 +146,21 @@ same page doesn't refetch it. A failed extraction for one URL degrades
 that result back to title+snippet rather than dropping it or breaking the
 turn — same best-effort posture as the search call itself.
 
+Extraction across the `top_n` results runs **concurrently**
+(`concurrent.futures.ThreadPoolExecutor`, stdlib — no new dependency,
+matches the app's existing worker-thread model) rather than one URL at a
+time, so N results cost roughly one fetch's wall time instead of N times
+that.
+
+Optionally, each extracted excerpt can also be **summarized** by the
+active model before grounding a turn (`[EXTRACT] use_summarize = true` in
+`config.ini`, off by default) — one extra fast, non-streaming Ollama call
+per result, condensing it down to what's relevant to your actual question
+(`[EXTRACT] summarize_max_chars`, default 600). This trades one more
+model round-trip for a smaller, less noisy excerpt; summarize calls also
+run concurrently across results, and any failure just falls back to the
+raw excerpt rather than losing content.
+
 ## Design
 
 **Self-curation subsystem** — memory, facts, snippets, and the web search

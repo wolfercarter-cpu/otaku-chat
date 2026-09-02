@@ -247,7 +247,9 @@ class OtakuChat(App):
 
         if on_status:
             on_status("reading top results...")
-        enriched = extract.extract_top_results(results)
+        enriched = extract.extract_top_results(
+            results, api_url=self.api_url, model=self.model, query=query
+        )
         extracted_count = sum(1 for r in enriched if r.get("excerpt"))
         self._last_search_results = enriched
         self._last_search_note = (

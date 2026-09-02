@@ -34,9 +34,11 @@ import re
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 
 from . import config, db
+from .ollama_client import OllamaError, chat_once
 from .redact import redact_secrets
 
 DEFAULT_TIMEOUT = 10
@@ -217,6 +219,32 @@ def extract_url(url: str, max_chars: int | None = None, use_cache: bool = True) 
     return text[:max_chars]
 
 
+def summarize_excerpt(
+    api_url: str, model: str, excerpt: str, query: str, max_chars: int | None = None
+) -> str:
+    """Condense a raw extracted page excerpt down to the parts relevant to
+    `query`, via one fast non-streaming Ollama call (chat_once). Best-effort:
+    any failure (model unreachable, malformed response, empty result) just
+    returns the original excerpt untouched rather than losing content or
+    breaking the turn — same posture as extract_url's own error handling.
+    """
+    max_chars = max_chars if max_chars is not None else config.get_extract_summarize_max_chars()
+    if not excerpt.strip():
+        return excerpt
+    prompt = (
+        f"Condense the following page content down to only what's relevant "
+        f"to this question, in plain text, under {max_chars} characters. "
+        f"No preamble, no markdown, just the condensed facts.\n\n"
+        f"Question: {query}\n\nPage content:\n{excerpt[:4000]}"
+    )
+    try:
+        summary = chat_once(api_url, model, [{"role": "user", "content": prompt}], timeout=20)
+    except OllamaError:
+        return excerpt
+    summary = summary.strip()
+    return summary[:max_chars] if summary else excerpt
+
+
 def format_extract_block(results: list[dict]) -> str:
     """Render extracted-page results as a plain-text system message block.
 
@@ -236,17 +264,53 @@ def format_extract_block(results: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def extract_top_results(results: list[dict], top_n: int | None = None) -> list[dict]:
-    """Extract page content for the top `top_n` search results. Best-effort
-    per URL — a failed extraction just omits `excerpt` rather than dropping
-    the whole result, so one bad page doesn't cost the other results."""
+def extract_top_results(
+    results: list[dict],
+    top_n: int | None = None,
+    api_url: str | None = None,
+    model: str | None = None,
+    query: str = "",
+) -> list[dict]:
+    """Extract page content for the top `top_n` search results, concurrently
+    (ThreadPoolExecutor — matches the app's existing worker-thread posture,
+    no new dependency) rather than one fetch at a time, so N results with
+    up to `EXTRACT.timeout_s` each cost roughly one timeout's worth of wall
+    time instead of N.
+
+    Best-effort per URL — a failed extraction just omits `excerpt` rather
+    than dropping the whole result, so one bad page doesn't cost the
+    others.
+
+    If EXTRACT.use_summarize is on (and api_url/model are given), each
+    successfully extracted excerpt also gets condensed via one extra fast
+    Ollama call (see summarize_excerpt) before being returned — trading
+    latency for a smaller, more relevant excerpt. Summarization runs after
+    all fetches complete, also concurrently, and is itself best-effort:
+    a failed summarize call just falls back to the raw excerpt.
+    """
     top_n = top_n if top_n is not None else config.get_extract_top_n()
-    enriched = []
-    for r in results[:top_n]:
+    targets = results[:top_n]
+
+    def _fetch(r: dict) -> dict:
         item = dict(r)
         try:
             item["excerpt"] = extract_url(r["url"])
         except ExtractError:
             item["excerpt"] = ""
-        enriched.append(item)
+        return item
+
+    if not targets:
+        return []
+    with ThreadPoolExecutor(max_workers=len(targets)) as pool:
+        enriched = list(pool.map(_fetch, targets))
+
+    if api_url and model and config.get_extract_use_summarize():
+        def _summarize(item: dict) -> dict:
+            if item.get("excerpt"):
+                item["excerpt"] = summarize_excerpt(api_url, model, item["excerpt"], query)
+            return item
+
+        with ThreadPoolExecutor(max_workers=len(enriched)) as pool:
+            enriched = list(pool.map(_summarize, enriched))
+
     return enriched
