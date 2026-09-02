@@ -1,6 +1,13 @@
 Screen {
     layout: vertical;
     background: $surface;
+    scrollbar-color: #8b5cf6;
+    scrollbar-color-hover: #a855f7;
+    scrollbar-color-active: #06b6d4;
+    scrollbar-background: $surface;
+    scrollbar-background-hover: $surface;
+    scrollbar-background-active: $surface;
+    scrollbar-corner-color: $surface;
 }
 
 #chat-leap {
